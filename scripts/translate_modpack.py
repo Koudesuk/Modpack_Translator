@@ -5,16 +5,21 @@ import argparse
 import json
 import random
 import sys
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from modpack_translator import run_log
 from modpack_translator.config import load_config
 from modpack_translator.pipeline.patcher import (
+    backup_asset_packs,
     backup_mods,
     backup_quest_configs,
+    touches_asset_packs,
     patch_modonomicon_unicode_fonts,
 )
+from modpack_translator.pipeline.glossary import default_glossary
 from modpack_translator.pipeline.preprocessor import diff_keys
 from modpack_translator.pipeline.runner import (
     _write_failed_items,
@@ -28,6 +33,12 @@ from modpack_translator.pipeline.translator import GGUFTranslator
 from tqdm import tqdm
 
 _PROJECT_ROOT = Path(__file__).parent.parent
+
+
+def _say(message: str) -> None:
+    """印到畫面，同時留進執行紀錄檔——回報問題時附的就是那份檔案。"""
+    print(message)
+    run_log.write(message)
 
 
 def parse_args():
@@ -124,9 +135,16 @@ def main():
     cfg = load_config(args.model_config, args.paths_config, args.language)
     cfg.paths.create_output_dirs()
 
+    run_log.start(cfg.paths.output_root, {
+        "介面": "命令列 (scripts/translate_modpack.py)",
+        "模組包": str(modpack_path),
+        "參數": " ".join(sys.argv[1:]),
+    })
+    run_log.install_excepthook()
+
     cache_path = cfg.paths.translation_cache
 
-    print(f"掃描模組包：{modpack_path}")
+    _say(f"掃描模組包：{modpack_path}")
     scanner = ModpackScanner()
     all_targets = scanner.scan(modpack_path, cfg.language.code)
     all_targets = _filter_pending_targets(all_targets, cfg.language.code)
@@ -138,7 +156,7 @@ def main():
     if args.max_steps > 0:
         all_targets = all_targets[:args.max_steps]
 
-    print(f"找到 {len(all_targets)} 個翻譯目標")
+    _say(f"找到 {len(all_targets)} 個翻譯目標")
     for fmt in (
         "json_lang", "legacy_lang", "patchouli_json",
         "ftbq_snbt", "ftbq_inline_snbt",
@@ -147,7 +165,7 @@ def main():
     ):
         count = sum(1 for t in all_targets if t.format == fmt)
         if count:
-            print(f"  {fmt}: {count}")
+            _say(f"  {fmt}: {count}")
 
     if args.dry_run:
         _dry_run_report(all_targets, cfg.language.code)
@@ -156,36 +174,49 @@ def main():
     game_root = resolve_game_root(modpack_path)
     if any(t.output_mode == "jar_inject" for t in all_targets) or not args.skip_mods:
         backed_up = backup_mods(game_root)
-        print(f"已備份 {backed_up} 個原始模組 jar 至 mods_bak/")
+        _say(f"已備份 {backed_up} 個原始模組 jar 至 mods_bak/")
     if not args.skip_mods:
         patched_fonts = patch_modonomicon_unicode_fonts(game_root)
         if patched_fonts:
-            print(f"已修補 {patched_fonts} 個 Modonomicon Unicode 字型 fallback")
+            _say(f"已修補 {patched_fonts} 個 Modonomicon Unicode 字型 fallback")
     if any(t.output_mode == "in_place" for t in all_targets):
         backed_up = backup_quest_configs(game_root)
-        print(f"已備份 {backed_up} 個任務/設定資料夾至 quests_bak/")
+        _say(f"已備份 {backed_up} 個任務/設定資料夾至 quests_bak/")
+    if touches_asset_packs((t.source_file for t in all_targets), game_root):
+        backed_up = backup_asset_packs(game_root)
+        _say(f"已備份 {backed_up} 個資源包／光影包至 *_bak/")
 
-    print("\n正在連線或啟動本機模型服務…")
+    _say("正在連線或啟動本機模型服務…")
     translator = GGUFTranslator(cfg.model, cfg.language.system_prompt)
+    translator.glossary = default_glossary(cfg.paths.output_root)
+    if translator.glossary:
+        _say(f"已載入用語庫 {len(translator.glossary):,} 條詞彙")
 
     try:
         cache = _load_cache(cache_path)
-        total_translated = total_cached = total_fallback = 0
+        total_translated = total_cached = total_fallback = total_skipped = 0
+        total_already = 0
         cache_dirty = 0
         failed_by_target: dict[str, dict[str, str]] = {}
 
         for target in tqdm(all_targets, desc="翻譯中", unit="file"):
             try:
-                n_t, n_c, n_f, failed = process_target(
+                stats = process_target(
                     target, translator, cache, cfg.language.code, args.retry,
                 )
-                total_translated += n_t
-                total_cached += n_c
-                total_fallback += n_f
-                if failed:
-                    failed_by_target[failed_target_name(target)] = failed
+                total_translated += stats.translated
+                total_cached += stats.cached
+                total_fallback += stats.fallback
+                total_skipped += stats.skipped
+                total_already += stats.already_ok
+                if stats.failed:
+                    failed_by_target[failed_target_name(target)] = stats.failed
             except Exception as exc:
                 tqdm.write(f"[警告] 略過 {target.mod_id}/{target.format}：{exc}")
+                run_log.write(
+                    f"[警告] 略過 {target.mod_id}/{target.format}（{target.source_file}）：{exc!r}\n"
+                    + traceback.format_exc().rstrip()
+                )
                 continue
 
             cache_dirty += 1
@@ -199,11 +230,13 @@ def main():
         failed_dir = _PROJECT_ROOT / "Failed Items"
         failed_files = _write_failed_items(failed_by_target, failed_dir)
         if failed_files > 0:
-            print(f"⚠ {failed_files} 個模組/任務書含翻譯失敗項目，詳見 Failed Items/ 資料夾。")
+            _say(f"⚠ {failed_files} 個模組/任務書含翻譯失敗項目，詳見 {failed_dir}")
 
-        print(f"\n完成 — 已翻譯={total_translated:,}  快取={total_cached:,}  回退={total_fallback:,}")
+        _say(f"完成 — 已翻譯={total_translated:,}  快取={total_cached:,}  "
+             f"回退={total_fallback:,}  不需翻譯={total_skipped:,}  既有可用={total_already:,}")
     finally:
         translator.close()
+        run_log.close()
 
 
 if __name__ == "__main__":

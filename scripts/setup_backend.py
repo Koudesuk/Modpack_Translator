@@ -37,6 +37,24 @@ CUDA_LINUX_WHEEL = (
     "v0.3.23-cu124/llama_cpp_python-0.3.23-py3-none-linux_x86_64.whl"
 )
 CPU_WHEEL_INDEX = "https://abetlen.github.io/llama-cpp-python/whl/cpu"
+
+# CPU 後端改用 llama.cpp 官方預編譯 binary，不用 llama-cpp-python 的 CPU wheel。
+#
+# 原因：那個 wheel 是「單一 ggml-cpu.dll、編譯期決定指令集」的建置，裡面含有 AVX-512
+# 指令。Intel 從 Alder Lake 起的消費級 CPU（i5-14400F、i7-13700K…）全都沒有 AVX-512，
+# 一載入模型就被系統以非法指令砍掉，錯誤碼 0xc000001d。
+#
+# 官方 binary 則附 14 個 ggml-cpu-*.dll 變體（sandybridge / haswell / alderlake /
+# skylakex / zen4 …），啟動時依實際 CPU 挑一個載入，所以哪顆 CPU 都跑得起來。
+LLAMA_CPP_BUILD = "b10142"
+CPU_WIN_ZIP = (
+    f"https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_CPP_BUILD}/"
+    f"llama-{LLAMA_CPP_BUILD}-bin-win-cpu-x64.zip"
+)
+CPU_LINUX_ZIP = (
+    f"https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_CPP_BUILD}/"
+    f"llama-{LLAMA_CPP_BUILD}-bin-ubuntu-x64.zip"
+)
 CUDA_RUNTIME_LIBS = {
     "windows": ("cudart64_12.dll", "cublas64_12.dll"),
     "linux": ("libcudart.so.12", "libcublas.so.12"),
@@ -318,21 +336,30 @@ def install_cuda_backend() -> None:
     ])
 
 
-def install_cpu_backend() -> None:
-    uninstall_llama_cpp_python()
-    run(["uv", "pip", "install", *LLAMA_CPP_SERVER_DEPS])
-    run(
-        [
-            "uv",
-            "pip",
-            "install",
-            "--reinstall",
-            "--no-cache",
-            f"llama-cpp-python[server]=={LLAMA_CPP_PYTHON_VERSION}",
-            "--extra-index-url",
-            CPU_WHEEL_INDEX,
-        ]
-    )
+def install_cpu_backend() -> Path:
+    """下載 llama.cpp 官方 CPU binary，回傳 llama-server 的路徑。
+
+    不再安裝 llama-cpp-python 的 CPU wheel——那個建置在沒有 AVX-512 的 CPU 上
+    必定崩潰（見檔頭 CPU_WIN_ZIP 的說明）。
+    """
+    system = platform.system().lower()
+    if system == "windows":
+        url = CPU_WIN_ZIP
+    elif system == "linux":
+        url = CPU_LINUX_ZIP
+    else:
+        raise RuntimeError("CPU 預編譯 llama.cpp binary 目前只支援 Windows/Linux。")
+
+    archive = RUNTIME_DIR / "downloads" / Path(urlparse(url).path).name
+    extract_dir = RUNTIME_DIR / "llama_cpp_cpu"
+    download(url, archive)
+
+    if not extract_dir.exists() or not list(extract_dir.rglob("llama-server*")):
+        print(f"正在解壓縮：{archive}")
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(archive) as zf:
+            zf.extractall(extract_dir)
+    return find_llama_server(extract_dir)
 
 
 def uninstall_llama_cpp_python() -> None:
@@ -499,9 +526,22 @@ def python_server_command(cfg: dict, base_model: Path, lora: Path, gpu_layers: i
     ]
 
 
-def binary_server_command(server: Path, cfg: dict, base_model: Path, lora: Path) -> list[str]:
+def binary_server_command(
+    server: Path,
+    cfg: dict,
+    base_model: Path,
+    lora: Path,
+    gpu_layers: int | None = None,
+) -> list[str]:
+    """組出 llama-server binary 的啟動指令。
+
+    `gpu_layers` 傳 0 代表純 CPU；留空則沿用設定檔（GPU 後端用）。CPU 後端一併把
+    flash attention 交給 auto——CPU 上強制開啟只會多一個失敗點。
+    """
     host, port = server_host_port(cfg["server_url"])
-    gpu_layers = "99" if int(cfg["n_gpu_layers"]) < 0 else str(cfg["n_gpu_layers"])
+    if gpu_layers is None:
+        gpu_layers = int(cfg["n_gpu_layers"])
+    layers = "99" if gpu_layers < 0 else str(gpu_layers)
     command = [
         str(server),
         "-m",
@@ -509,9 +549,9 @@ def binary_server_command(server: Path, cfg: dict, base_model: Path, lora: Path)
         "-c",
         str(cfg["n_ctx"]),
         "-ngl",
-        gpu_layers,
+        layers,
         "-fa",
-        "on",
+        "auto" if layers == "0" else "on",
         "--host",
         host,
         "--port",
@@ -562,10 +602,9 @@ def main() -> None:
                     f"若接受較慢的 CPU 翻譯，請重新執行 {setup_command('cpu')}。"
                 ) from exc
             print("使用者已同意改用 CPU 後端。正在安裝 CPU backend...")
-            install_cpu_backend()
-            validate_python_backend()
+            server = install_cpu_backend()
             backend = "cpu"
-            command = python_server_command(cfg, base_model, lora, 0)
+            command = binary_server_command(server, cfg, base_model, lora, gpu_layers=0)
         except (subprocess.CalledProcessError, RuntimeError) as exc:
             print(explain_cuda_failure(exc))
             if requested_backend == "cuda" or not confirm_cpu_fallback():
@@ -574,17 +613,15 @@ def main() -> None:
                     f"若接受較慢的 CPU 翻譯，請重新執行 {setup_command('cpu')}。"
                 ) from exc
             print("使用者已同意改用 CPU 後端。正在安裝 CPU backend...")
-            install_cpu_backend()
-            validate_python_backend()
+            server = install_cpu_backend()
             backend = "cpu"
-            command = python_server_command(cfg, base_model, lora, 0)
+            command = binary_server_command(server, cfg, base_model, lora, gpu_layers=0)
     elif backend == "amd":
         server = install_amd_backend()
         command = binary_server_command(server, cfg, base_model, lora)
     else:
-        install_cpu_backend()
-        validate_python_backend()
-        command = python_server_command(cfg, base_model, lora, 0)
+        server = install_cpu_backend()
+        command = binary_server_command(server, cfg, base_model, lora, gpu_layers=0)
 
     write_backend_config(backend, command, cfg, base_model)
     print("後端初始化完成。正常啟動程式即可，程式會自動啟動本機模型服務。")

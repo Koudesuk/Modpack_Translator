@@ -4,11 +4,12 @@ import time
 from collections import deque
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSettings, QThread, QTimer, Signal
-from PySide6.QtGui import QFont, QIcon, QTextCursor
+from PySide6.QtCore import Qt, QSettings, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QFont, QIcon, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QDialog,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -29,7 +30,18 @@ from PySide6.QtWidgets import (
 _PROJECT_ROOT = Path(__file__).parents[3]
 _APP_ICON_PATH = _PROJECT_ROOT / "assets" / "icon" / "app_icon.png"
 
+from modpack_translator import run_log
 from modpack_translator.config import load_config
+from modpack_translator.gui.failed_items_dialog import FailedItemsDialog
+from modpack_translator.gui.glossary_dialog import GlossaryDialog
+from modpack_translator.pipeline.glossary import custom_glossary_path
+from modpack_translator.pipeline.runner import (
+    apply_manual_translations,
+    cache_key,
+    load_manual_translations,
+    manual_translations_path,
+    save_manual_translations,
+)
 from modpack_translator.gui.theme import apply_theme, restyle
 from modpack_translator.gui.worker import ScanWorker, TranslateWorker
 from modpack_translator.version import APP_NAME, APP_VERSION, __version__
@@ -78,7 +90,10 @@ class MainWindow(QMainWindow):
         self._update_check_worker: UpdateCheckWorker | None = None
         self._update_download_worker: UpdateDownloadWorker | None = None
 
+        # 上次翻譯的模組包路徑 + 當時的失敗項目。兩者一起決定「失敗項目…」按鈕能不能按：
+        # 換了資料夾，這些 target 就指向別的檔案了，套用下去等於寫錯地方。
         self._translated_modpack_path: str = ""
+        self._failed_items: list = []
         self._translation_start_time: float = 0.0
         self._translation_total: int = 0
         self._current_progress: int = 0
@@ -99,19 +114,29 @@ class MainWindow(QMainWindow):
         self._force_stop_timer.timeout.connect(self._force_stop_worker)
 
         self._cfg = None
+        cfg_error: Exception | None = None
         try:
             self._cfg = load_config(
                 _PROJECT_ROOT / "configs" / "model.yaml",
                 _PROJECT_ROOT / "configs" / "paths.yaml",
                 _PROJECT_ROOT / "configs" / "languages" / "zh_tw.yaml",
             )
-        except Exception:
-            pass
+        except Exception as exc:      # 紀錄檔還沒開，先留著，開檔後補寫
+            cfg_error = exc
 
         # 主題：讀取使用者上次的選擇，否則跟隨系統
         self._settings = QSettings("koudesuk", "ModpackTranslator")
         saved = self._settings.value("ui/theme", "")
         self._theme_mode = saved if saved in ("light", "dark") else self._detect_system_theme()
+
+        # 執行紀錄：開檔即清空，只留這一次執行。裝 excepthook 讓沒攔到的例外也留得住。
+        run_log.start(
+            self._cfg.paths.output_root if self._cfg else _PROJECT_ROOT / "outputs",
+            {"設定檔": "已載入" if self._cfg else "載入失敗（將使用預設值）"},
+        )
+        run_log.install_excepthook()
+        if cfg_error is not None:
+            run_log.exception("載入設定檔", cfg_error)
 
         self._build_ui()
         apply_theme(self._theme_mode)
@@ -278,6 +303,28 @@ class MainWindow(QMainWindow):
         retry_row.addWidget(retry_help)
         retry_row.addStretch()
 
+        # 放在既有這一列的尾端，主視窗高度不變。
+        self.glossary_btn = QPushButton("自訂用語…")
+        self.glossary_btn.clicked.connect(self._open_glossary_dialog)
+        glossary_help = _make_help_label(
+            "指定英文詞的固定譯法，例如把某個物品名一律翻成你習慣的說法。\n"
+            "優先序高於內建的 Minecraft 官方用語，可用來覆蓋官方譯名。\n"
+            "設定存在輸出資料夾，程式自動更新時不會被清掉。"
+        )
+        retry_row.addWidget(self.glossary_btn)
+        retry_row.addWidget(glossary_help)
+
+        self.failed_btn = QPushButton("失敗項目…")
+        self.failed_btn.setEnabled(False)
+        self.failed_btn.clicked.connect(self._reopen_failed_items)
+        failed_help = _make_help_label(
+            "重新開啟上次翻譯的失敗項目視窗，逐條手動補譯後直接寫回模組包。\n"
+            "只在本次執行期間有效；換了模組包資料夾或關掉程式就會失效，\n"
+            "此時請重新翻譯一次（已翻好的會走快取，很快）。"
+        )
+        retry_row.addWidget(self.failed_btn)
+        retry_row.addWidget(failed_help)
+
         opt_vbox.addLayout(checkbox_row)
         opt_vbox.addLayout(retry_row)
 
@@ -325,8 +372,15 @@ class MainWindow(QMainWindow):
         copy_btn.setFixedWidth(64)
         copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         copy_btn.clicked.connect(self._copy_log)
+        # 回報問題時要附的就是這個檔；按鈕擺在旁邊，使用者才不用自己去翻資料夾。
+        open_log_btn = QPushButton("執行紀錄")
+        open_log_btn.setFixedWidth(88)
+        open_log_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        open_log_btn.setToolTip("開啟本次執行的紀錄檔，回報問題時請附上這個檔案。")
+        open_log_btn.clicked.connect(self._open_run_log)
         result_header.addWidget(result_lbl)
         result_header.addStretch()
+        result_header.addWidget(open_log_btn)
         result_header.addWidget(copy_btn)
         root_layout.addLayout(result_header)
 
@@ -367,6 +421,27 @@ class MainWindow(QMainWindow):
 
     def _copy_log(self):
         QApplication.clipboard().setText(self.log_edit.toPlainText())
+
+    # ------------------------------------------------------------------ 紀錄
+
+    def _open_run_log(self):
+        log_path = run_log.path()
+        if log_path is None or not log_path.exists():
+            QMessageBox.information(
+                self, "沒有紀錄檔",
+                "這次執行還沒有產生紀錄檔。\n輸出資料夾可能無法寫入。",
+            )
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_path)))
+
+    def _show_log(self, text: str):
+        """寫進畫面的「掃描結果」面板，同時留進執行紀錄檔。"""
+        self.log_edit.setPlainText(text)
+        run_log.write(text)
+
+    def _append_log(self, text: str):
+        self.log_edit.append(text)
+        run_log.write(text)
 
     # ------------------------------------------------------------------ 主題 / 樣式
 
@@ -477,8 +552,20 @@ class MainWindow(QMainWindow):
 
     def _set_busy(self, busy: bool):
         self.scan_btn.setEnabled(not busy)
-        if not busy:
+        if busy:
+            self.failed_btn.setEnabled(False)
+        else:
             self.translate_btn.setEnabled(len(self._scan_targets) > 0)
+            self._refresh_failed_button()
+
+    def _refresh_failed_button(self):
+        """失敗項目仍對得上目前選的模組包時才讓按。"""
+        current = self.modpack_edit.text().strip()
+        self.failed_btn.setEnabled(
+            bool(self._failed_items)
+            and bool(self._translated_modpack_path)
+            and current == self._translated_modpack_path
+        )
 
     _SPEED_WINDOW = 30.0   # 秒，滑動視窗寬度
     _STALL_SECS   = 8.0    # 超過此秒數無進度 → 顯示「翻譯中…」
@@ -530,6 +617,10 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ 掃描
 
+    def _open_glossary_dialog(self):
+        output_root = self._cfg.paths.output_root if self._cfg else _PROJECT_ROOT / "outputs"
+        GlossaryDialog(custom_glossary_path(output_root), self).exec()
+
     def _on_scan(self):
         if not self._validate_inputs():
             return
@@ -543,12 +634,19 @@ class MainWindow(QMainWindow):
         self.stats_label.setVisible(False)
         self.log_edit.setPlainText("")
 
+        run_log.section("掃描模組包")
+        run_log.write(
+            f"模組包：{self.modpack_edit.text().strip()}\n"
+            f"翻譯模組：{self.chk_mods.isChecked()}　翻譯任務書：{self.chk_quests.isChecked()}"
+        )
+
         self._scan_worker = ScanWorker(
             modpack_path=Path(self.modpack_edit.text().strip()),
             skip_mods=not self.chk_mods.isChecked(),
             skip_quests=not self.chk_quests.isChecked(),
             lang_code=(self._cfg.language.code if self._cfg else "zh_tw"),
         )
+        self._scan_worker.log.connect(run_log.write)
         self._scan_worker.finished.connect(self._on_scan_finished)
         self._scan_worker.error.connect(self._on_error)
         self._scan_worker.start()
@@ -574,7 +672,7 @@ class MainWindow(QMainWindow):
                 "  • 未勾選任何翻譯選項\n"
                 "  • 模組語言檔不含英文（en_us）字串",
             )
-            self.log_edit.setPlainText("掃描完成 — 未找到可翻譯的檔案。")
+            self._show_log("掃描完成 — 未找到可翻譯的檔案。")
             return
 
         modpack_path = self.modpack_edit.text().strip()
@@ -602,7 +700,7 @@ class MainWindow(QMainWindow):
                     lines.append(f"    ({mod_id})  {key}")
                     lines.append(f'    → "{display}"')
 
-        self.log_edit.setPlainText("\n".join(lines))
+        self._show_log("\n".join(lines))
         self.translate_btn.setEnabled(True)
 
     # ------------------------------------------------------------------ 翻譯
@@ -667,6 +765,23 @@ class MainWindow(QMainWindow):
             modpack_path=modpack_path,
             retry_count=self.retry_spin.value(),
         )
+        run_log.section("開始翻譯")
+        run_log.table([
+            ("待處理檔案", f"{n_files:,}"),
+            ("預估字串", f"{self._scan_total_pairs:,}"),
+            ("重試次數", self.retry_spin.value()),
+            ("目標語言", cfg.language.code),
+            ("基礎模型", cfg.model.base_gguf_path or cfg.model.base_hf_filename),
+            ("LoRA", f"{cfg.model.lora_gguf_path or '（無）'}（scale {cfg.model.lora_scale}）"),
+            ("服務位址", cfg.model.server_url),
+            ("GPU 層數", cfg.model.n_gpu_layers),
+            ("context / max_tokens", f"{cfg.model.n_ctx} / {cfg.model.max_tokens}"),
+            ("temperature / repeat_penalty",
+             f"{cfg.model.temperature} / {cfg.model.repeat_penalty}"),
+            ("快取檔", cfg.paths.translation_cache),
+        ])
+
+        self._translate_worker.log.connect(run_log.write)
         self._translate_worker.progress.connect(self._on_translate_progress)
         self._translate_worker.pair_progress.connect(self._on_pair_progress)
         self._translate_worker.finished.connect(self._on_translate_finished)
@@ -686,7 +801,8 @@ class MainWindow(QMainWindow):
         # 進度條以字串對數平滑推進；clamp 防止估算差異造成超出 maximum
         self.progress_bar.setValue(min(pairs_done, self.progress_bar.maximum()))
 
-    def _on_translate_finished(self, translated: int, cached: int, fallback: int, failed_files: int):
+    def _on_translate_finished(self, translated: int, cached: int, fallback: int,
+                               failed_files: int, failed_items=None):
         self._stats_timer.stop()
         self._force_stop_timer.stop()
         self._update_stats_label()
@@ -694,6 +810,10 @@ class MainWindow(QMainWindow):
 
         existing = self.log_edit.toPlainText()
         summary_lines = ["", "─" * 40]
+
+        # 中止時同樣記下來：已跑完的那部分失敗項目照樣補得了，只是不主動彈窗打斷。
+        self._translated_modpack_path = self.modpack_edit.text().strip()
+        self._failed_items = list(failed_items or [])
 
         if self._translation_cancelled:
             self._set_accent("orange")
@@ -710,7 +830,6 @@ class MainWindow(QMainWindow):
             self._set_accent("green")
             self.translate_btn.setText("✓  完成")
             self._set_tone(self.translate_btn, "success")
-            self._translated_modpack_path = self.modpack_edit.text().strip()
             summary_lines += [
                 "翻譯完成",
                 f"  已翻譯：{translated:,} 組",
@@ -724,6 +843,74 @@ class MainWindow(QMainWindow):
             )
         self.log_edit.setPlainText(existing + "\n" + "\n".join(summary_lines))
         self.log_edit.moveCursor(QTextCursor.MoveOperation.End)
+        run_log.write("\n".join(summary_lines[2:]))     # 略過空行與分隔線
+
+        self._refresh_failed_button()
+
+        if failed_items and not self._translation_cancelled:
+            self._offer_manual_translation(failed_items)
+
+    # ------------------------------------------------------- 失敗項目手動補譯
+
+    def _reopen_failed_items(self):
+        """「失敗項目…」按鈕：重開上次翻譯的補譯視窗。"""
+        if not self._failed_items:
+            return
+        self._offer_manual_translation(self._failed_items)
+
+    def _offer_manual_translation(self, failed_items):
+        """把失敗項目攤開讓使用者逐條補譯，套用後直接寫回模組包。"""
+        rows: list[tuple[str, str, str]] = []
+        origins: list[tuple[object, str, str]] = []
+        for target, failed in failed_items:
+            label = f"{target.mod_id} · {target.format}"
+            for key, source in sorted(failed.items()):
+                rows.append((label, key, source))
+                origins.append((target, key, source))
+        if not rows:
+            return
+
+        # 重開時把先前補過的填回去，使用者才不用重打，也才改得動打錯的那幾條。
+        output_root = self._cfg.paths.output_root if self._cfg else _PROJECT_ROOT / "outputs"
+        saved = load_manual_translations(manual_translations_path(output_root))
+        initial = {
+            index: saved[cache_key(source)]
+            for index, (_label, _key, source) in enumerate(rows)
+            if cache_key(source) in saved
+        }
+
+        dialog = FailedItemsDialog(rows, self, initial=initial)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        filled = dialog.translations()
+        if not filled:
+            return
+
+        lang_code = self._cfg.language.code if self._cfg else "zh_tw"
+        grouped: dict[int, tuple[object, dict[str, str]]] = {}
+        manual_entries: dict[str, str] = {}
+        for row_index, text in filled.items():
+            target, key, source = origins[row_index]
+            grouped.setdefault(id(target), (target, {}))[1][key] = text
+            manual_entries[cache_key(source)] = text
+
+        applied = 0
+        problems: list[str] = []
+        for target, values in grouped.values():
+            try:
+                applied += apply_manual_translations(target, values, lang_code)
+            except Exception as exc:
+                problems.append(f"{target.mod_id}/{target.format}：{exc}")
+
+        save_manual_translations(manual_translations_path(output_root), manual_entries)
+
+        message = f"已將 {applied:,} 條手動譯文寫回模組包，並記住以供下次翻譯沿用。"
+        if problems:
+            message += "\n\n下列項目寫入失敗：\n" + "\n".join(problems[:8])
+            QMessageBox.warning(self, "部分項目未套用", message)
+        else:
+            QMessageBox.information(self, "已套用", message)
+        self._append_log(f"已手動補譯 {applied:,} 條並寫回模組包。")
 
     # ------------------------------------------------------------------ 錯誤
 
@@ -735,6 +922,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setVisible(False)
         self.stats_label.setVisible(False)
         self._set_busy(False)
+        run_log.write(f"[錯誤] {msg}")
         QMessageBox.critical(self, "錯誤", msg)
 
     # ------------------------------------------------------------------ 強制停止
@@ -786,14 +974,18 @@ class MainWindow(QMainWindow):
             self.translate_btn.setText("▶  開始翻譯")
             self._set_tone(self.translate_btn, "")
             self._set_accent("blue")
+        self._refresh_failed_button()
 
     def closeEvent(self, event):
         if self._translate_worker and self._translate_worker.isRunning():
             self._translation_cancelled = True
+            run_log.write("使用者關閉視窗，正在中止翻譯…")
             self._translate_worker.cancel()
             if not self._translate_worker.wait(10_000):
+                run_log.write("[警告] 執行緒未在 10 秒內結束，改以 terminate() 強制中止")
                 self._translate_worker.terminate()
                 self._translate_worker.wait(2_000)
+        run_log.close()
         event.accept()
 
 

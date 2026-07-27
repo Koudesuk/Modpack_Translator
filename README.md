@@ -1,4 +1,4 @@
-# Minecraft Modpack Translator v1.4.1
+# Minecraft Modpack Translator v1.5.0
 
 **Language / 語言：** English | [繁體中文](README_zh.md)
 
@@ -6,7 +6,24 @@
 
 ---
 
-A tool that automatically translates Minecraft modpack language files from English (`en_us`) to Traditional Chinese (`zh_tw`) using a fine-tuned GGUF model with LoRA adaptation. Supports both a graphical user interface and a command-line interface.
+A tool that automatically translates Minecraft modpacks from English (`en_us`) to Traditional Chinese (`zh_tw`) — language files, quest books, and in-game guidebooks — using a fine-tuned GGUF model with LoRA adaptation. Supports both a graphical user interface and a command-line interface.
+
+---
+
+## What's New in v1.5.0
+
+| Feature | Description |
+|---|---|
+| **Glossary** | Ships 1,945 official Traditional Chinese Minecraft terms. When the whole source string matches a term, the translation is taken directly without invoking the model; for longer sentences, matching terms are appended to the prompt; leftover English terms are substituted afterwards. The GUI's "自訂用語…" button lets you add or override terms |
+| **GuideME guides** | In-game guide pages (`.md`) from AE2 (press G), Powah, and similar mods are now translated. JSX component tags and links are preserved verbatim |
+| **Citadel guidebooks** | Guidebook text (`.txt`) from Alex's Mobs / Alex's Caves is now translated. Chinese has no spaces for the renderer to break on, so the output is wrapped following the convention of each mod's own official translation, keeping text inside the page |
+| **Resource packs / shader packs** | `resourcepacks/` and `shaderpacks/` are now scanned. These packs add or override GUI text with keys that do not exist in any mod JAR, so without scanning them those strings stay English forever |
+| **Manual correction of failed items** | After translation, strings the model could not handle are listed for manual entry and written straight back into the modpack. Corrections are remembered and never overwritten on later runs; the "失敗項目…" button reopens the dialog as long as the app is still open and the modpack folder has not changed |
+| **Run log** | `outputs/run.log` records every translation result and every rejection reason for a single run, with no line limit. Attach this file when reporting an issue |
+| **Format-argument validation** | A translation that uses one more `%s` than the source makes the game throw when it reads that string. Such output is now rejected and retranslated, including pre-existing translations shipped with the mod |
+| **Duplicate JAR entry handling** | A few mod JARs contain duplicate entries for the same path. Rewrites now de-duplicate them (last entry wins) instead of producing a broken JAR |
+| **New CPU backend** | Switched to llama.cpp's official prebuilt binary, fixing the `0xc000001d` crash on some CPUs |
+| **Antivirus false-positive fix** | The launcher no longer starts the app through `cmd.exe` and now carries full version and publisher metadata |
 
 ---
 
@@ -102,7 +119,7 @@ The setup script installs uv-managed CPython 3.12, creates `.venv/`, detects you
 setup_windows.bat
 ```
 
-After setup, Windows builds a versioned launcher such as `模組包翻譯器v1.4.1.exe` in the project folder. Double-click it to start the app without opening a terminal. If the launcher is missing, run setup again or build it manually:
+After setup, Windows builds a versioned launcher such as `模組包翻譯器v1.5.0.exe` in the project folder. Double-click it to start the app without opening a terminal. If the launcher is missing, run setup again or build it manually:
 
 ```bat
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_windows_launcher.ps1
@@ -119,7 +136,9 @@ Hardware selection is automatic:
 |---|---|
 | NVIDIA | CUDA `llama-cpp-python[server]` wheel |
 | AMD Windows/Linux | AMD prebuilt `llama.cpp` / `llama-server` binary |
-| CPU only | CPU `llama-cpp-python[server]` wheel |
+| CPU only | llama.cpp's official prebuilt `llama-server` binary (Windows/Linux) |
+
+As of v1.5.0 the CPU backend uses llama.cpp's official binary instead of the `llama-cpp-python[server]` CPU wheel. That wheel ships a single `ggml-cpu.dll` build which executes unsupported instructions on some CPUs and crashes (`0xc000001d`); the official binary ships 14 instruction-set variants and picks one at startup based on the actual CPU.
 
 Close the app before re-running setup. On Windows, a running local model server can lock `.dll` files and prevent backend replacement.
 
@@ -196,7 +215,7 @@ Launch the graphical interface:
 uv run python main.py
 ```
 
-On Windows, users can also double-click the versioned launcher EXE, such as `模組包翻譯器v1.4.1.exe`. It checks that setup has been run, launches `uv run python main.py` in the background, and writes launcher errors to `.runtime/launcher.log`.
+On Windows, users can also double-click the versioned launcher EXE, such as `模組包翻譯器v1.5.0.exe`. It checks that setup has been run, launches `uv run python main.py` in the background, and writes launcher errors to `.runtime/launcher.log`.
 
 On startup, the app checks the latest GitHub Release in the background. If a newer release package is available, it shows an update dialog; if there is no update, it shows nothing. Auto-update downloads the release ZIP, verifies its SHA256 file when present, applies the new source files, removes the old `.venv` and stale local backend runtime files, runs setup again, and then restarts the app.
 
@@ -209,11 +228,23 @@ On startup, the app checks the latest GitHub Release in the background. If a new
 5. **Translate** — Click "▶ 開始翻譯". The progress bar shows percentage, speed, elapsed time, and ETA.
 6. **Done** — When complete, the progress bar turns green and the button shows "✓ 完成".
 
+**Other buttons:**
+
+| Button | Purpose |
+|---|---|
+| **自訂用語…** (Custom terms) | Pin a fixed translation for an English term. Custom terms take priority over the built-in official glossary, so they can override official names. Leaving a translation blank disables that term. Stored in `outputs/custom_glossary.json`, which auto-update never clears |
+| **失敗項目…** (Failed items) | Reopen the manual correction dialog. It pops up automatically once when translation finishes with failures; this button reopens it as long as the app is still open and the modpack folder has not changed |
+| **執行紀錄** (Run log) | Open `outputs/run.log`. Attach this file when reporting an issue |
+
 **Original files are always backed up:**
 - Mod JARs → `mods_bak/`
 - Quest configs → `quests_bak/`
+- Resource packs → `resourcepacks_bak/`
+- Shader packs → `shaderpacks_bak/`
 
-**Failed items** (strings that could not be translated after all retries) are written to `Failed Items/<mod_name>.txt` for review. If no items fail, this folder is not created.
+**Failed items** (strings that could not be translated after all retries) are written to `Failed Items/<mod_name>.txt` for review. If no items fail, this folder is not created. When translation finishes with failures, the app lists every one of them so you can fill in translations by hand; clicking apply writes them straight back into the modpack. Manual corrections are stored in `outputs/manual_translations.json` and take priority on later runs, so the model never overwrites them.
+
+> Manual correction is GUI-only; the CLI does not read `outputs/manual_translations.json`. Custom glossary terms (`outputs/custom_glossary.json`) apply to both interfaces.
 
 ---
 
@@ -250,21 +281,34 @@ uv run python scripts/translate_modpack.py --modpack "C:/CurseForge/Instances/AT
 uv run python scripts/translate_modpack.py --modpack "C:/CurseForge/Instances/ATM10" --skip-mods --retry 2
 ```
 
+The CLI shares the same run log as the GUI: every run clears and rewrites `outputs/run.log`.
+
 ---
 
 ## Supported File Formats
 
 | Format Key | Extension | Description |
 |---|---|---|
-| `json_lang` | `.json` | Standard mod language file (`assets/<mod>/lang/en_us.json`) |
-| `legacy_lang` | `.lang` | Pre-1.13 mod language file (`en_us.lang`) |
+| `json_lang` | `.json` | Standard mod language file (`assets/<mod>/lang/en_us.json`); resource pack overrides use the same format |
+| `legacy_lang` | `.lang` | Pre-1.13 mod language file (`en_us.lang`); shader pack `shaders/lang/` uses the same format |
 | `patchouli_json` | `.json` | Patchouli guidebook pages |
+| `guideme_md` | `.md` | GuideME in-game guide pages (AE2, Powah, etc.) |
+| `citadel_txt` | `.txt` | Citadel guidebook pages (Alex's Mobs, Alex's Caves, etc.) |
 | `ftbq_snbt` | `.snbt` | FTB Quests language files |
 | `ftbq_inline_snbt` | `.snbt` | FTB Quests direct text fields in quest files |
 | `heracles_snbt` | `.snbt` | Heracles (Odyssey Quests) language files |
 | `heracles_inline_snbt` | `.snbt` | Heracles inline text fields |
 | `bq_lang` | `.lang` | Better Questing language format (1.12) |
 | `kubejs_json` | `.json` | KubeJS script translation files |
+
+### Scan Scope
+
+| Location | Handling |
+|---|---|
+| `mods/*.jar` | Translations injected back into the JAR; originals backed up to `mods_bak/` |
+| `config/`, `kubejs/` | Written in place; originals backed up to `quests_bak/` |
+| `resourcepacks/` | ZIP packs are injected back into the ZIP, folder packs are written in place; originals backed up to `resourcepacks_bak/` |
+| `shaderpacks/` | `shaders/lang/` of folder-based packs is written in place; originals backed up to `shaderpacks_bak/`. ZIP shader packs are not handled |
 
 ---
 
@@ -278,18 +322,27 @@ uv run python scripts/translate_modpack.py --modpack "C:/CurseForge/Instances/AT
 
 ```
 <modpack-folder>/
-├── mods/               ← translated JARs (in-place)
-├── mods_bak/           ← original JAR backups
-├── config/             ← translated quest configs (in-place)
-└── quests_bak/         ← original quest config backups
+├── mods/                ← translated JARs (in-place)
+├── mods_bak/            ← original JAR backups
+├── config/              ← translated quest configs (in-place)
+├── quests_bak/          ← original quest config backups
+├── resourcepacks/       ← translated resource packs (in-place)
+├── resourcepacks_bak/   ← original resource pack backups
+├── shaderpacks/         ← translated shader packs (in-place)
+└── shaderpacks_bak/     ← original shader pack backups
 
 <project-root>/
 ├── outputs/
-│   └── translation_cache.json   ← reused on subsequent runs
+│   ├── translation_cache.json     ← reused on subsequent runs
+│   ├── manual_translations.json   ← manual corrections, applied first on later runs
+│   ├── custom_glossary.json       ← custom terms (written by the GUI's "自訂用語…")
+│   └── run.log                    ← full log of this run, cleared when the app starts
 └── Failed Items/
     ├── modname__json_lang.txt   ← strings that failed after all retries
     └── ...
 ```
+
+Nothing under `outputs/` is ever overwritten by auto-update.
 
 ---
 
@@ -298,7 +351,28 @@ uv run python scripts/translate_modpack.py --modpack "C:/CurseForge/Instances/AT
 **Q: How do ZIP users update the app?**
 - Open the app. If a newer GitHub Release exists, click **Auto update** in the update dialog.
 - The updater preserves user outputs and backups, but rebuilds `.venv` and the local backend setup to avoid dependency conflicts.
-- Release ZIPs are generated by GitHub Actions from tags such as `v1.4.1`.
+- Release ZIPs are generated by GitHub Actions from tags such as `v1.5.0`.
+
+**Q: Windows Defender flags the launcher as malware and blocks it.**
+- This is a false positive. The launcher is a small, unsigned executable, and antivirus machine-learning models sometimes flag such files (v1.4.1 was misidentified as `Trojan:Win32/Suschil!rfn`).
+- v1.5.0 addresses the causes: the launcher no longer starts the app through `cmd.exe`, and it carries full version and publisher metadata.
+- If it is still blocked: verify the download against the SHA-256 published on the Release page, then go to Windows Security → Virus & threat protection → Protection history and choose "Allow". Reporting the file to [Microsoft](https://www.microsoft.com/en-us/wdsi/filesubmission) helps get the false positive corrected.
+- You can skip the launcher entirely and run `uv run python main.py` instead — the result is identical.
+
+**Q: Startup fails with `OSError: [WinError -1073741795] Windows Error 0xc000001d`.**
+- This came from the old CPU backend: the `llama-cpp-python` CPU wheel is a single build that executes unsupported instructions on some CPUs and crashes.
+- As of v1.5.0 the CPU backend uses llama.cpp's official prebuilt binary, which ships 14 instruction-set variants and selects one automatically at startup.
+- If you upgraded from an older version, re-run `setup_windows.bat` or `./setup_unix.sh` so the backend is replaced.
+
+**Q: What should I attach when reporting a problem?**
+- `outputs/run.log` — click the "執行紀錄" button in the GUI to open it.
+- It records every translation result, every rejected translation with its reason, and full exception tracebacks for a single run, with no line limit.
+- It is cleared each time the app starts, so it only ever contains the most recent run.
+
+**Q: I don't like how a particular term was translated. Can I change it?**
+- Click "自訂用語…" in the GUI and add an English term with your preferred translation. Custom terms take priority over the built-in official glossary, so they override official names.
+- Leaving the translation blank disables that term and lets the model translate it freely.
+- Settings are stored in `outputs/custom_glossary.json`, which auto-update never clears.
 
 **Q: Scan finds 0 translatable files.**
 - Make sure you selected the correct folder. It should be the instance root containing `mods/` or `config/`.
@@ -322,9 +396,10 @@ uv run python scripts/translate_modpack.py --modpack "C:/CurseForge/Instances/AT
 - AMD acceleration uses AMD's prebuilt `llama.cpp` binaries on supported Windows/Linux systems.
 
 **Q: Some strings fall back to English.**
-- This happens when the model output fails the placeholder validation (e.g., a `{0}` format code is missing from the translation).
+- This happens when the model output fails validation: a missing placeholder (e.g., `{0}` dropped from the translation), a higher format-argument count than the source (an extra `%s` makes the game throw when it reads that string), missing structural markup, collapsed line breaks, or no Chinese at all in the output.
 - Increase the retry count in the GUI or with `--retry N` on the CLI.
-- Failed items are logged to `Failed Items/` for manual review.
+- Every rejection reason is written to `outputs/run.log`; failed items are additionally collected in `Failed Items/`.
+- The GUI lists failed items after translation so you can fill them in by hand, writing the results straight back into the modpack.
 
 **Q: Where is the translated output?**
 - **Mod JARs**: Translations are injected directly into the mod `.jar` files. Original JARs are backed up to `mods_bak/`.

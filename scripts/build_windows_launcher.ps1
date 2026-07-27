@@ -78,7 +78,17 @@ $source = @"
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Windows.Forms;
+
+// 版本資源。沒有中繼資料的未簽章小型執行檔，是防毒 ML 模型最愛的特徵之一。
+[assembly: AssemblyTitle("Minecraft Modpack Translator Launcher")]
+[assembly: AssemblyDescription("Starts the Minecraft modpack translator application.")]
+[assembly: AssemblyProduct("Minecraft Modpack Translator")]
+[assembly: AssemblyCompany("Koudesuk")]
+[assembly: AssemblyCopyright("MIT License")]
+[assembly: AssemblyVersion("$AppVersion.0")]
+[assembly: AssemblyFileVersion("$AppVersion.0")]
 
 internal static class Program
 {
@@ -89,7 +99,8 @@ internal static class Program
         string runtime = Path.Combine(root, ".runtime");
         Directory.CreateDirectory(runtime);
 
-        if (!CommandExists("uv"))
+        string uv = FindOnPath("uv.exe");
+        if (uv == null)
         {
             MessageBox.Show(
                 "uv was not found. Install uv, then run setup_windows.bat before starting the app.",
@@ -122,36 +133,53 @@ internal static class Program
             return 1;
         }
 
+        // 直接啟動 uv 並用 .NET 接管輸出。
+        // 舊版是 cmd.exe /c "… > log 2>&1" 且隱藏視窗——未簽章的小程式靜默拉起
+        // 命令列殼層再重導輸出，正是防毒啟發式判定 dropper 的典型特徵，v1.4.1 因此
+        // 被 Defender 標成 Trojan:Win32/Suschil!rfn。不經殼層就沒有這個特徵。
         string logPath = Path.Combine(runtime, "launcher.log");
-        string command = "uv run python main.py > " + Quote(logPath) + " 2>&1";
 
         ProcessStartInfo info = new ProcessStartInfo();
-        info.FileName = "cmd.exe";
-        info.Arguments = "/c " + command;
+        info.FileName = uv;
+        info.Arguments = "run python main.py";
         info.WorkingDirectory = root;
         info.CreateNoWindow = true;
         info.UseShellExecute = false;
-        Process.Start(info);
-        return 0;
-    }
+        info.RedirectStandardOutput = true;
+        info.RedirectStandardError = true;
 
-    private static bool CommandExists(string name)
-    {
-        ProcessStartInfo info = new ProcessStartInfo();
-        info.FileName = "cmd.exe";
-        info.Arguments = "/c where " + name + " >nul 2>nul";
-        info.CreateNoWindow = true;
-        info.UseShellExecute = false;
-        using (Process process = Process.Start(info))
+        Process process = Process.Start(info);
+        StreamWriter log = new StreamWriter(logPath, false);
+        log.AutoFlush = true;
+        process.OutputDataReceived += delegate(object s, DataReceivedEventArgs e)
         {
-            process.WaitForExit();
-            return process.ExitCode == 0;
-        }
+            if (e.Data != null) { lock (log) { log.WriteLine(e.Data); } }
+        };
+        process.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e)
+        {
+            if (e.Data != null) { lock (log) { log.WriteLine(e.Data); } }
+        };
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        process.WaitForExit();
+        log.Close();
+        return process.ExitCode;
     }
 
-    private static string Quote(string value)
+    // 自己走 PATH 找 uv.exe，取代 cmd.exe /c where uv。
+    private static string FindOnPath(string fileName)
     {
-        return "\"" + value.Replace("\"", "\\\"") + "\"";
+        string pathVar = Environment.GetEnvironmentVariable("PATH");
+        if (pathVar == null) { return null; }
+        foreach (string dir in pathVar.Split(Path.PathSeparator))
+        {
+            if (dir.Length == 0) { continue; }
+            string candidate;
+            try { candidate = Path.Combine(dir.Trim('"'), fileName); }
+            catch (ArgumentException) { continue; }
+            if (File.Exists(candidate)) { return candidate; }
+        }
+        return null;
     }
 }
 "@

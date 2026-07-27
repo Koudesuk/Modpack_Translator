@@ -46,6 +46,33 @@ jobs:
             throw "pyproject.toml version does not match $version"
           }
 
+      # checkout 只會取出 git 追蹤的檔案。新模組若忘了 git add，這裡就會 ImportError，
+      # 而不是等到使用者下載後才發現程式打不開。也一併確認用語庫這類資料檔真的在包裡。
+      - name: Verify the checkout is complete
+        shell: pwsh
+        run: |
+          $missing = @()
+          foreach ($f in @(
+            "assets/glossary/minecraft_zh_tw.json",
+            "src/modpack_translator/run_log.py",
+            "src/modpack_translator/gui/failed_items_dialog.py",
+            "src/modpack_translator/gui/glossary_dialog.py",
+            "src/modpack_translator/pipeline/glossary.py",
+            "src/modpack_translator/pipeline/guide_md.py",
+            "src/modpack_translator/pipeline/citadel_book.py"
+          )) {
+            if (-not (Test-Path $f)) { $missing += $f }
+          }
+          if ($missing.Count -gt 0) {
+            throw "These files are missing from the checkout (forgot to git add?):`n  " + ($missing -join "`n  ")
+          }
+
+          pip install --quiet PySide6 pydantic pyyaml openai
+          $env:PYTHONPATH = "src;."
+          $env:QT_QPA_PLATFORM = "offscreen"
+          python -c "import modpack_translator.gui.main_window; print('import OK')"
+          if ($LASTEXITCODE -ne 0) { throw "The app cannot be imported from a clean checkout." }
+
       - name: Build Windows launcher
         shell: powershell
         run: |
@@ -83,12 +110,43 @@ jobs:
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  Modpack_Translator-$tag.zip" | Set-Content "$zip.sha256" -NoNewline -Encoding ascii
 
+      - name: Read archive hash
+        id: hash
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          $line = Get-Content "dist/Modpack_Translator-$tag.zip.sha256" -Raw
+          "sha256=$($line.Split(' ')[0])" >> $env:GITHUB_OUTPUT
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}
           generate_release_notes: true
+          append_body: true
+          body: |
+            ### 檔案校驗
+
+            `Modpack_Translator-${{ steps.version.outputs.tag }}.zip`
+            SHA-256：`${{ steps.hash.outputs.sha256 }}`
+
+            ### 防毒軟體誤判說明
+
+            啟動器是一支未經數位簽章的小型執行檔。Windows Defender 等防毒軟體的
+            機器學習模型有時會把這類檔案標記為威脅（v1.4.1 曾被誤判為
+            `Trojan:Win32/Suschil!rfn`）。這是誤判，不是真的有惡意程式。
+
+            本版已針對誤判成因做了調整：啟動器不再透過 `cmd.exe` 啟動程式，
+            並加上了完整的版本與發行者中繼資料。
+
+            若仍被攔截：
+
+            1. 先用上面的 SHA-256 確認下載的檔案沒有被竄改。
+            2. 到 Windows 安全性 → 病毒與威脅防護 → 保護歷程記錄，選擇「允許」。
+            3. 歡迎把檔案回報給 Microsoft 以便修正誤判：
+               https://www.microsoft.com/en-us/wdsi/filesubmission
+            4. 若不想用啟動器，可以直接執行 `uv run python main.py`。
           files: |
             dist/Modpack_Translator-${{ steps.version.outputs.tag }}.zip
             dist/Modpack_Translator-${{ steps.version.outputs.tag }}.zip.sha256

@@ -1,4 +1,4 @@
-# Minecraft模組包翻譯器 v1.4.1
+# Minecraft模組包翻譯器 v1.5.0
 
 **Language / 語言：** [English](README.md) | 繁體中文
 
@@ -6,7 +6,24 @@
 
 ---
 
-自動將 Minecraft 模組包語言檔從英文（`en_us`）翻譯為繁體中文（`zh_tw`）的工具，底層使用 GGUF 格式的微調模型搭配 LoRA 適配器。提供圖形化介面（GUI）與命令列介面（CLI）。
+自動將 Minecraft 模組包從英文（`en_us`）翻譯為繁體中文（`zh_tw`）的工具，涵蓋語言檔、任務書與遊戲內指南書，底層使用 GGUF 格式的微調模型搭配 LoRA 適配器。提供圖形化介面（GUI）與命令列介面（CLI）。
+
+---
+
+## v1.5.0 更新內容
+
+| 項目 | 說明 |
+|---|---|
+| **用語庫** | 內建 1,945 條 Minecraft 官方繁中譯名。原文整串命中詞條時直接取用、不經模型；翻長句時把相關詞條附進 prompt；模型仍留英文原詞則事後強制替換。GUI 的「自訂用語…」可新增或覆蓋詞條 |
+| **GuideME 指南** | AE2（遊戲內按 G）、Powah 等模組的指南頁（`.md`）現在會翻譯，JSX 元件標籤與連結原樣保留 |
+| **Citadel 圖鑑書** | Alex's Mobs／Alex's Caves 的圖鑑內文（`.txt`）現在會翻譯。中文沒有空格無法自動斷行，程式會依模組官方譯本的慣例自行折行，避免文字衝出書頁 |
+| **資源包／光影包** | 掃描範圍新增 `resourcepacks/` 與 `shaderpacks/`。這些包會覆蓋或新增 GUI 文字，那些鍵在模組 jar 裡並不存在，不掃就永遠是英文 |
+| **失敗項目手動補譯** | 翻譯完成後會列出自動翻不好的字串，可逐條手動補上並直接寫回模組包。補過的譯文會被記住，下次翻譯不會被蓋掉；沒關程式的話也可以用「失敗項目…」按鈕重開 |
+| **執行紀錄** | `outputs/run.log` 完整記錄單次執行的每一條翻譯結果與每一次拒絕原因，不設行數上限。回報問題時請附上這個檔案 |
+| **佔位符引數驗證** | 譯文若比原文多用了一個 `%s`，遊戲讀到該字串會直接丟例外。現在會擋下並重譯，連模組原本就帶錯的既有譯文也一併重寫 |
+| **jar 重複條目去重** | 少數模組 jar 內含同名重複檔案，改寫時會以最後一筆為準去重，不再產出壞掉的 jar |
+| **CPU 後端更換** | 改用 llama.cpp 官方預編譯 binary，修正部分 CPU 啟動時的 `0xc000001d` 崩潰 |
+| **防毒誤判修正** | launcher 不再透過 `cmd.exe` 啟動程式，並補上完整的版本與發行者中繼資料 |
 
 ---
 
@@ -104,7 +121,7 @@ cuDNN **不需要**安裝。
 setup_windows.bat
 ```
 
-初始化完成後，Windows 會在專案資料夾建立版本化 launcher，例如 `模組包翻譯器v1.4.1.exe`。之後直接雙擊它即可啟動程式，不需要開終端機手動輸入命令。若 launcher 遺失，請重新執行 setup，或手動建立：
+初始化完成後，Windows 會在專案資料夾建立版本化 launcher，例如 `模組包翻譯器v1.5.0.exe`。之後直接雙擊它即可啟動程式，不需要開終端機手動輸入命令。若 launcher 遺失，請重新執行 setup，或手動建立：
 
 ```bat
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_windows_launcher.ps1
@@ -121,7 +138,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_windows_launch
 |---|---|
 | NVIDIA | CUDA `llama-cpp-python[server]` wheel |
 | AMD Windows/Linux | AMD 預先編譯的 `llama.cpp` / `llama-server` binary |
-| 僅 CPU | CPU `llama-cpp-python[server]` wheel |
+| 僅 CPU | llama.cpp 官方預編譯的 `llama-server` binary（Windows/Linux） |
+
+CPU 後端在 v1.5.0 從 `llama-cpp-python[server]` 的 CPU wheel 換成 llama.cpp 官方 binary。該 wheel 的 `ggml-cpu.dll` 是單一建置，在部分 CPU 上會執行到不支援的指令而崩潰（`0xc000001d`）；官方 binary 內含 14 種指令集變體，啟動時依實際 CPU 挑選。
 
 重新執行初始化前請先關閉翻譯器。Windows 上正在執行的本機模型服務會鎖住 `.dll` 檔案，導致後端替換失敗。
 
@@ -198,7 +217,7 @@ paths:
 uv run python main.py
 ```
 
-Windows 使用者也可以直接雙擊版本化 launcher，例如 `模組包翻譯器v1.4.1.exe`；它會先檢查是否已完成 setup，再在背景執行 `uv run python main.py`，launcher 錯誤會寫到 `.runtime/launcher.log`。
+Windows 使用者也可以直接雙擊版本化 launcher，例如 `模組包翻譯器v1.5.0.exe`；它會先檢查是否已完成 setup，再在背景執行 `uv run python main.py`，launcher 錯誤會寫到 `.runtime/launcher.log`。
 
 啟動時，程式會在背景檢查最新 GitHub Release。有新版 release package 時才顯示更新視窗；沒有更新時不顯示任何訊息。自動更新會下載 release ZIP，若有 SHA256 檔會先驗證，接著套用新版原始碼、移除舊 `.venv` 與過期的本機後端 runtime 檔案、重新執行 setup，完成後再啟動新版程式。
 
@@ -211,11 +230,23 @@ Windows 使用者也可以直接雙擊版本化 launcher，例如 `模組包翻�
 5. **翻譯** — 點擊「▶ 開始翻譯」，進度條顯示百分比、速度、已用時間及預計剩餘時間。
 6. **完成** — 翻譯完成後，進度條變綠，按鈕顯示「✓ 完成」。
 
+**其他按鈕：**
+
+| 按鈕 | 用途 |
+|---|---|
+| **自訂用語…** | 指定英文詞的固定譯法，優先序高於內建的官方用語，可用來覆蓋官方譯名。譯名留空代表停用該詞條。存於 `outputs/custom_glossary.json`，自動更新不會清掉 |
+| **失敗項目…** | 重開手動補譯視窗。翻譯完成後若有失敗項目會自動跳出一次；只要沒關程式、也沒換模組包資料夾，就能用這個按鈕再開 |
+| **執行紀錄** | 開啟 `outputs/run.log`。回報問題時請附上這個檔案 |
+
 **原始檔案備份位置：**
 - 模組 JAR → `mods_bak/`
 - 任務設定 → `quests_bak/`
+- 資源包 → `resourcepacks_bak/`
+- 光影包 → `shaderpacks_bak/`
 
-**失敗項目**（重試後仍無法翻譯的字串）會寫入 `Failed Items/<模組名稱>.txt`，供使用者檢查。若無失敗項目，此資料夾不會被建立。
+**失敗項目**（重試後仍無法翻譯的字串）會寫入 `Failed Items/<模組名稱>.txt`，供使用者檢查。若無失敗項目，此資料夾不會被建立。翻譯結束時若有失敗項目，程式會列出所有字串讓您逐條手動補譯，按「套用」即直接寫回模組包；補上的譯文存於 `outputs/manual_translations.json`，下次翻譯會優先沿用、不會被模型蓋掉。
+
+> 手動補譯是 GUI 專屬功能；CLI 不會讀取 `outputs/manual_translations.json`。自訂用語（`outputs/custom_glossary.json`）則兩種介面都會套用。
 
 ---
 
@@ -252,21 +283,34 @@ uv run python scripts/translate_modpack.py --modpack "C:/CurseForge/Instances/AT
 uv run python scripts/translate_modpack.py --modpack "C:/CurseForge/Instances/ATM10" --skip-mods --retry 2
 ```
 
+CLI 與 GUI 共用同一份執行紀錄：每次執行會清空並重寫 `outputs/run.log`。
+
 ---
 
 ## 支援的檔案格式
 
 | 格式代碼 | 副檔名 | 說明 |
 |---|---|---|
-| `json_lang` | `.json` | 標準模組語言檔（`assets/<mod>/lang/en_us.json`） |
-| `legacy_lang` | `.lang` | 1.13 以前的舊式語言檔（`en_us.lang`） |
+| `json_lang` | `.json` | 標準模組語言檔（`assets/<mod>/lang/en_us.json`），資源包內的覆蓋檔同格式 |
+| `legacy_lang` | `.lang` | 1.13 以前的舊式語言檔（`en_us.lang`），光影包的 `shaders/lang/` 同格式 |
 | `patchouli_json` | `.json` | Patchouli 導覽書頁面 |
+| `guideme_md` | `.md` | GuideME 遊戲內指南頁面（AE2、Powah 等） |
+| `citadel_txt` | `.txt` | Citadel 圖鑑書頁面（Alex's Mobs、Alex's Caves 等） |
 | `ftbq_snbt` | `.snbt` | FTB Quests 語言檔 |
 | `ftbq_inline_snbt` | `.snbt` | FTB Quests 任務檔中的直接文字欄位 |
 | `heracles_snbt` | `.snbt` | Heracles（Odyssey Quests）語言檔 |
 | `heracles_inline_snbt` | `.snbt` | Heracles 直接文字欄位 |
 | `bq_lang` | `.lang` | Better Questing 語言格式（1.12） |
 | `kubejs_json` | `.json` | KubeJS 腳本翻譯檔 |
+
+### 掃描範圍
+
+| 位置 | 處理方式 |
+|---|---|
+| `mods/*.jar` | 譯文注入回 jar，原檔備份至 `mods_bak/` |
+| `config/`、`kubejs/` | 就地寫入，原檔備份至 `quests_bak/` |
+| `resourcepacks/` | zip 包注入回 zip、資料夾包就地寫入，原檔備份至 `resourcepacks_bak/` |
+| `shaderpacks/` | 就地寫入資料夾型光影包的 `shaders/lang/`，原檔備份至 `shaderpacks_bak/`。zip 光影包目前不處理 |
 
 ---
 
@@ -280,18 +324,27 @@ uv run python scripts/translate_modpack.py --modpack "C:/CurseForge/Instances/AT
 
 ```
 <模組包資料夾>/
-├── mods/               ← 翻譯後的 JAR（原位修改）
-├── mods_bak/           ← 原始 JAR 備份
-├── config/             ← 翻譯後的任務設定（原位修改）
-└── quests_bak/         ← 原始任務設定備份
+├── mods/                ← 翻譯後的 JAR（原位修改）
+├── mods_bak/            ← 原始 JAR 備份
+├── config/              ← 翻譯後的任務設定（原位修改）
+├── quests_bak/          ← 原始任務設定備份
+├── resourcepacks/       ← 翻譯後的資源包（原位修改）
+├── resourcepacks_bak/   ← 原始資源包備份
+├── shaderpacks/         ← 翻譯後的光影包（原位修改）
+└── shaderpacks_bak/     ← 原始光影包備份
 
 <專案根目錄>/
 ├── outputs/
-│   └── translation_cache.json   ← 翻譯快取，再次執行時重複使用
+│   ├── translation_cache.json     ← 翻譯快取，再次執行時重複使用
+│   ├── manual_translations.json   ← 手動補譯的譯文，下次翻譯優先沿用
+│   ├── custom_glossary.json       ← 自訂用語（由 GUI「自訂用語…」寫入）
+│   └── run.log                    ← 本次執行的完整紀錄，開啟程式時清空
 └── Failed Items/
     ├── modname__json_lang.txt   ← 重試後仍失敗的字串
     └── ...
 ```
+
+`outputs/` 底下的檔案都不會被自動更新覆蓋。
 
 ---
 
@@ -300,7 +353,28 @@ uv run python scripts/translate_modpack.py --modpack "C:/CurseForge/Instances/AT
 **Q：ZIP 使用者要怎麼更新？**
 - 開啟程式即可。如果 GitHub Release 有新版，更新視窗會出現，按 **自動更新**。
 - updater 會保留使用者輸出與備份，但會重建 `.venv` 和本機後端設定，避免依賴衝突。
-- Release ZIP 由 GitHub Actions 根據 `v1.4.1` 這類 tag 自動產生。
+- Release ZIP 由 GitHub Actions 根據 `v1.5.0` 這類 tag 自動產生。
+
+**Q：Windows Defender 說 launcher 是病毒，擋著不讓執行。**
+- 這是誤判。launcher 是一支未經數位簽章的小型執行檔，防毒軟體的機器學習模型有時會把這類檔案標記為威脅（v1.4.1 曾被誤判為 `Trojan:Win32/Suschil!rfn`）。
+- v1.5.0 已針對誤判成因調整：launcher 不再透過 `cmd.exe` 啟動程式，並加上完整的版本與發行者中繼資料。
+- 若仍被攔截：先用 Release 頁面提供的 SHA-256 確認檔案沒被竄改，再到 Windows 安全性 → 病毒與威脅防護 → 保護歷程記錄選擇「允許」。也歡迎回報給 [Microsoft](https://www.microsoft.com/en-us/wdsi/filesubmission) 以便修正誤判。
+- 不想用 launcher 的話，直接執行 `uv run python main.py` 效果完全相同。
+
+**Q：啟動時出現 `OSError: [WinError -1073741795] Windows Error 0xc000001d`。**
+- 這是舊版 CPU 後端的問題：`llama-cpp-python` 的 CPU wheel 是單一建置，在部分 CPU 上會執行到不支援的指令而崩潰。
+- v1.5.0 起 CPU 後端改用 llama.cpp 官方預編譯 binary，內含 14 種指令集變體、啟動時自動挑選。
+- 從舊版升上來的使用者請重新執行 `setup_windows.bat` 或 `./setup_unix.sh`，讓後端換成新的。
+
+**Q：我要回報問題，該附上什麼？**
+- `outputs/run.log`，GUI 裡點「執行紀錄」按鈕即可開啟。
+- 該檔案記錄單次執行的每一條翻譯結果、每一次被拒絕的譯文與原因、以及完整的例外堆疊，沒有行數上限。
+- 每次開啟程式時會清空，所以裡面永遠只有最近一次執行的內容。
+
+**Q：某個詞的譯名我不滿意，怎麼改？**
+- GUI 點「自訂用語…」，加上「英文原詞 → 繁中譯名」即可。自訂用語優先序高於內建的官方用語，可以直接覆蓋官方譯名。
+- 譯名留空代表停用該詞條，讓模型自由翻譯。
+- 設定存在 `outputs/custom_glossary.json`，自動更新不會清掉。
 
 **Q：掃描找不到任何可翻譯的檔案。**
 - 確認選擇的是正確的資料夾，應包含 `mods/` 或 `config/` 子資料夾。
@@ -324,9 +398,10 @@ uv run python scripts/translate_modpack.py --modpack "C:/CurseForge/Instances/AT
 - AMD 加速使用 AMD 官方預編譯的 `llama.cpp` binary，支援範圍以 Windows/Linux 為主。
 
 **Q：部分字串回退為英文。**
-- 這發生在模型輸出未通過佔位符驗證時（例如翻譯後遺失了 `{0}` 格式代碼）。
+- 這發生在模型輸出未通過驗證時：佔位符遺失（例如翻譯後少了 `{0}`）、格式引數變多（譯文多用了一個 `%s`，遊戲讀到會直接丟例外）、結構標記遺失、換行被壓縮，或譯文裡根本沒有中文。
 - 在 GUI 中增加重試次數，或在 CLI 使用 `--retry N` 參數。
-- 失敗項目會記錄於 `Failed Items/`，方便手動檢查。
+- 每一次拒絕的原因都寫在 `outputs/run.log`，失敗項目另外整理於 `Failed Items/`。
+- GUI 會在翻譯結束後把失敗項目列出來讓您手動補譯，補完直接寫回模組包。
 
 **Q：翻譯結果輸出在哪裡？**
 - **模組 JAR**：翻譯結果直接注入模組 `.jar` 檔案，原始 JAR 備份至 `mods_bak/`。

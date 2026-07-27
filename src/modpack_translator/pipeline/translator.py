@@ -240,6 +240,18 @@ def _server_log_tail(max_chars: int = 4000) -> str:
 
 def _backend_help_from_log(detail: str) -> str:
     lowered = detail.lower()
+    if "0xc000001d" in lowered or "-1073741795" in lowered:
+        return (
+            "\n\nLikely cause: the llama-cpp-python CPU wheel is compiled with CPU "
+            "instructions your processor does not have (AVX-512). Consumer Intel CPUs "
+            "since Alder Lake — i5-14400F, i7-13700K and so on — have no AVX-512, so "
+            "the model load is killed with 0xc000001d.\n"
+            "Fix: re-run setup so the CPU backend is reinstalled. Current versions "
+            "install llama.cpp's official prebuilt server instead, which picks a CPU "
+            "kernel matching your processor at runtime.\n"
+            "  Windows: setup_windows.bat --backend cpu\n"
+            "  Linux/macOS: ./setup_unix.sh --backend cpu"
+        )
     if "failed to virtuallock" in lowered or "failed to mlock" in lowered:
         return (
             "\n\nLikely cause: the backend tried to lock the model into RAM. "
@@ -291,33 +303,7 @@ class GGUFTranslator:
         if not _server_ready(self._base_url) and cfg.auto_start_server:
             command = _as_command(runtime.get("server_command") or cfg.server_start_command)
             if command:
-                _SERVER_LOG.parent.mkdir(parents=True, exist_ok=True)
-                log = _SERVER_LOG.open("ab")
-                creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-                self._server_process = subprocess.Popen(
-                    command,
-                    cwd=_PROJECT_ROOT,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    creationflags=creationflags,
-                    start_new_session=(os.name != "nt"),
-                )
-                if os.name == "nt":
-                    try:
-                        self._server_job = _WindowsJob()
-                        self._server_job.assign(self._server_process)
-                    except Exception:
-                        if self._server_job is not None:
-                            self._server_job.close()
-                            self._server_job = None
-
-                deadline = time.monotonic() + max(1, cfg.server_ready_timeout)
-                while time.monotonic() < deadline:
-                    if _server_ready(self._base_url):
-                        break
-                    if self._server_process.poll() is not None:
-                        break
-                    time.sleep(_READY_POLL_SECONDS)
+                self._launch_server(command, cfg.server_ready_timeout)
 
         status = _server_status(self._base_url)
         if status != "ready":
@@ -338,7 +324,46 @@ class GGUFTranslator:
 
         self._client = OpenAI(base_url=f"{self._base_url}/v1", api_key=api_key)
         self._system_prompt = system_prompt
+        # 用語庫（可選）。由呼叫端在建構後指定，translate() 會把命中的詞條附在
+        # system prompt 最後——靜態前綴不變，prompt 快取才留得住。
+        self.glossary = None
         self._cfg = cfg
+
+    def _launch_server(self, command: list[str], ready_timeout: int) -> int | None:
+        """啟動模型服務並等它就緒。回傳行程退出碼；仍在執行（或已就緒）則回 None。"""
+        # 重試前先收掉上一輪的 job 物件，否則 handle 會漏。
+        if self._server_job is not None:
+            self._server_job.close()
+            self._server_job = None
+
+        _SERVER_LOG.parent.mkdir(parents=True, exist_ok=True)
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        with _SERVER_LOG.open("ab") as log:
+            self._server_process = subprocess.Popen(
+                command,
+                cwd=_PROJECT_ROOT,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                creationflags=creationflags,
+                start_new_session=(os.name != "nt"),
+            )
+        if os.name == "nt":
+            try:
+                self._server_job = _WindowsJob()
+                self._server_job.assign(self._server_process)
+            except Exception:
+                if self._server_job is not None:
+                    self._server_job.close()
+                    self._server_job = None
+
+        deadline = time.monotonic() + max(1, ready_timeout)
+        while time.monotonic() < deadline:
+            if _server_ready(self._base_url):
+                return None
+            if self._server_process.poll() is not None:
+                return self._server_process.returncode
+            time.sleep(_READY_POLL_SECONDS)
+        return None
 
     def close(self) -> None:
         if self._server_process is None:
@@ -399,6 +424,11 @@ class GGUFTranslator:
         except Exception:
             pass
 
+    def _glossary_block(self, text: str) -> str:
+        if self.glossary is None:
+            return ""
+        return self.glossary.prompt_block(text)
+
     def translate(self, text: str, cancel_check: Callable[[], bool] | None = None) -> str:
         """
         翻譯單條字串，使用串流模式逐 token 生成。
@@ -408,7 +438,7 @@ class GGUFTranslator:
         stream = self._client.chat.completions.create(
             model=self._model,
             messages=[
-                {"role": "system", "content": self._system_prompt},
+                {"role": "system", "content": self._system_prompt + self._glossary_block(text)},
                 {"role": "user",   "content": text},
             ],
             max_tokens=self._cfg.max_tokens,

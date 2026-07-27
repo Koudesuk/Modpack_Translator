@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import zipfile
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,36 @@ def backup_mods(game_root: Path) -> int:
             continue
         shutil.copy2(jar, backup)
         count += 1
+    return count
+
+
+def touches_asset_packs(source_files: Iterable[Path], game_root: Path) -> bool:
+    """這批目標會不會寫進資源包／光影包——決定要不要先備份。"""
+    roots = (game_root / "resourcepacks", game_root / "shaderpacks")
+    return any(
+        any(Path(source).is_relative_to(root) for root in roots)
+        for source in source_files
+    )
+
+
+def backup_asset_packs(game_root: Path) -> int:
+    """Back up resource/shader packs once before writing translations into them."""
+    count = 0
+    for folder in ("resourcepacks", "shaderpacks"):
+        source_dir = game_root / folder
+        if not source_dir.is_dir():
+            continue
+        backup_dir = game_root / f"{folder}_bak"
+        for entry in sorted(source_dir.iterdir()):
+            backup = backup_dir / entry.name
+            if backup.exists():
+                continue
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            if entry.is_dir():
+                shutil.copytree(entry, backup)
+            else:
+                shutil.copy2(entry, backup)
+            count += 1
     return count
 
 
@@ -188,6 +219,25 @@ def write_jar_json_file(jar_path: Path, path_in_jar: str, payload: dict[str, Any
     _rewrite_jar(jar_path, {path_in_jar: raw})
 
 
+def read_jar_text_or_none(jar_path: Path, path_in_jar: str | None) -> str | None:
+    """讀 jar 內的純文字檔；缺檔或解碼失敗回 None。
+
+    （preprocessor 另有一個同用途但缺檔會拋例外的 read_jar_text，別搞混。）"""
+    if not path_in_jar:
+        return None
+    try:
+        with zipfile.ZipFile(jar_path) as zf:
+            if path_in_jar not in zf.namelist():
+                return None
+            return zf.read(path_in_jar).decode("utf-8-sig")
+    except (zipfile.BadZipFile, OSError, UnicodeDecodeError):
+        return None
+
+
+def write_jar_text(jar_path: Path, path_in_jar: str, text: str) -> None:
+    _rewrite_jar(jar_path, {path_in_jar: text.encode("utf-8")})
+
+
 def _rewrite_jar(jar_path: Path, replacements: dict[str, bytes]) -> None:
     tmp_path = jar_path.with_name(f"{jar_path.name}.tmp")
     try:
@@ -195,8 +245,15 @@ def _rewrite_jar(jar_path: Path, replacements: dict[str, bytes]) -> None:
             infos = {info.filename: info for info in src.infolist()}
             replacement_paths = set(replacements)
 
-            for info in src.infolist():
+            # ZIP 格式允許同名 entry 重複，少數模組 jar 確實如此。src.read(name)
+            # 只會回傳最後一筆，照原樣逐項複製會把所有重複項寫成同一份內容，並在
+            # 輸出 jar 留下重複。以「最後一筆為準」去重，與 zipfile 的查表語意一致；
+            # 保持原始順序（MANIFEST 之類仍在前）。
+            last_index = {info.filename: i for i, info in enumerate(src.infolist())}
+            for i, info in enumerate(src.infolist()):
                 if info.filename in replacement_paths or _is_signature_file(info.filename):
+                    continue
+                if last_index[info.filename] != i:
                     continue
                 dst.writestr(_clone_zip_info(info), src.read(info.filename))
 
