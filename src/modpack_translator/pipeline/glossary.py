@@ -37,6 +37,7 @@ class Glossary:
             _normalize(source): translated for source, translated in self._terms.items()
         }
         self._patterns: dict[str, re.Pattern[str]] = {}
+        self._loose_patterns: dict[str, re.Pattern[str]] = {}
         # 以「詞條首字（小寫）」建索引。若不建，每翻一條字串都要對 1,900 多個詞條
         # 各跑一次 regex；乘上整包七萬多條就是純粹的浪費。查詢時只比對首字出現在
         # 文字裡的那幾個詞條。
@@ -70,7 +71,7 @@ class Glossary:
         for term in self._candidates(source):
             if len(found) >= limit:
                 break
-            if self._pattern(term).search(source):
+            if self._loose_pattern(term).search(source):
                 found.append((term, self._terms[term]))
         return found
 
@@ -141,6 +142,19 @@ class Glossary:
         if cached is None:
             cached = re.compile(_WORD_EDGE.format(re.escape(term)))
             self._patterns[term] = cached
+        return cached
+
+    def _loose_pattern(self, term: str) -> re.Pattern[str]:
+        """比對用（prompt 注入）的不分大小寫版本。
+
+        原文寫 "saturation value"、詞條寫 "Saturation Value" 時，大小寫敏感的比對
+        等於整條線索沒送出去，模型只能自己猜——實測就是這樣猜出「飢餓值」的。
+        替換（`enforce`）維持大小寫敏感：那裡動的是譯文，換錯會壞掉程式識別字。
+        """
+        cached = self._loose_patterns.get(term)
+        if cached is None:
+            cached = re.compile(_WORD_EDGE.format(re.escape(term)), re.IGNORECASE)
+            self._loose_patterns[term] = cached
         return cached
 
 

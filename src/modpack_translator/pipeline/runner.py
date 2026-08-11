@@ -23,9 +23,10 @@ from modpack_translator.pipeline.patcher import (
     write_jar_legacy_lang,
     write_jar_text,
 )
+from modpack_translator.pipeline.apoli_power import read_power_text, write_power_text
 from modpack_translator.pipeline.citadel_book import extract_citadel_text, rebuild_citadel_text
 from modpack_translator.pipeline.guide_md import extract_guide_text, rebuild_guide_text
-from modpack_translator.pipeline.postprocessor import process
+from modpack_translator.pipeline.postprocessor import normalize_line_shape, process
 from modpack_translator.pipeline.preprocessor import (
     classify_translation_entry,
     decode,
@@ -33,6 +34,7 @@ from modpack_translator.pipeline.preprocessor import (
     encode,
     read_inline_snbt_text,
     is_usable_translation,
+    loads_relaxed,
     read_legacy_lang,
     read_bq_lang,
     read_json_lang,
@@ -188,6 +190,20 @@ def _translate_validated(
     if glossary is not None:
         final = glossary.enforce(source, final)
     return final, True
+
+
+def _normalize_cached(cache: dict[str, str], ck: str, source: str, glossary: Any) -> None:
+    """就地修好舊快取條目：零推理成本，而且每個雜湊只算一次。
+
+    快取跨版本存活，裡面躺著的是「當時的規則」翻出來的東西——沒有用語庫的譯名、
+    模型自己多加的換行。命中就沿用等於把舊缺陷一路帶到新的模組包裡。
+    """
+    fixed = normalize_line_shape(cache[ck], source)
+    if glossary is not None:
+        fixed = glossary.enforce(source, fixed)
+    if fixed != cache[ck]:
+        run_log.detail(f"  ↳ 就地校正快取條目：{ck}")
+        cache[ck] = fixed
 
 
 def _static_translation(source: str) -> str | None:
@@ -353,12 +369,7 @@ def translate_dict(
                 on_pair_done(1)
             continue
         if ck in cache and is_usable_translation(src, cache[ck]):
-            # 舊快取是在沒有用語庫時翻的，順手就地正規化：零推理成本，且只需算一次。
-            if glossary is not None:
-                normalized = glossary.enforce(src, cache[ck])
-                if normalized != cache[ck]:
-                    run_log.detail(f"  ↳ 用語庫就地校正快取：{ck}")
-                    cache[ck] = normalized
+            _normalize_cached(cache, ck, src, glossary)
             result[key] = cache[ck]
             n_cached += 1
             run_log.outcome("cache", key, src, cache[ck])
@@ -402,6 +413,8 @@ def read_target_strings(target: TranslationTarget) -> dict[str, str]:
         return read_bq_lang(target.source_file)
     elif target.format == "kubejs_json":
         return read_json_lang(target.source_file, None)
+    elif target.format == "apoli_power":
+        return read_power_text(read_power_document(target))
     elif target.format in ("guideme_md", "citadel_txt"):
         raw = read_jar_text_or_none(target.source_file, target.path_in_jar)
         if not raw:
@@ -409,6 +422,72 @@ def read_target_strings(target: TranslationTarget) -> dict[str, str]:
         extract = _TEXT_PAGE_CODECS[target.format][0]
         return extract(raw)
     return {}
+
+
+# ----------------------------------------------------- Origins／Apoli 能力定義
+
+def read_power_document(target: TranslationTarget) -> Any:
+    """能力定義檔的完整 JSON。讀不到或壞掉時回 `{}`——掃描階段已經記過一行了。"""
+    if target.path_in_jar:
+        raw = read_jar_text_or_none(target.source_file, target.path_in_jar)
+    else:
+        try:
+            raw = target.source_file.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
+            return {}
+    if not raw:
+        return {}
+    try:
+        return loads_relaxed(raw)
+    except json.JSONDecodeError:
+        return {}
+
+
+def write_power_document(target: TranslationTarget, document: Any) -> None:
+    """原地寫回：能力名稱就住在定義檔裡，`data/` 沒有語言檔那一層。"""
+    if target.path_in_jar:
+        write_jar_json_file(target.source_file, target.target_path_in_jar or target.path_in_jar, document)
+        return
+    path = target.target_file or target.source_file
+    path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _process_power_json(
+    target: TranslationTarget,
+    translator: Any,
+    cache: dict[str, str],
+    retry_count: int = 0,
+    cancel_check=None,
+    on_pair_done=None,
+    manual: dict[str, str] | None = None,
+) -> TargetStats:
+    document = read_power_document(target)
+    en_dict = read_power_text(document)
+    if not en_dict:
+        return TargetStats(0, 0, 0, {}, 0, 0)
+
+    # 既有譯文一律傳空表：譯文就寫在同一個欄位裡，已經是中文的那些會在分類階段
+    # 被判為不需翻譯，所以重跑仍然是冪等的。
+    result, n_translated, n_cached, n_fallback, failed, n_skipped, n_already_ok = translate_dict(
+        en_dict, {}, translator, cache, retry_count, cancel_check, on_pair_done, manual
+    )
+
+    if _apply_power_text(document, en_dict, result):
+        write_power_document(target, document)
+    return TargetStats(n_translated, n_cached, n_fallback, failed, n_skipped, n_already_ok)
+
+
+def _apply_power_text(document: Any, en_dict: dict[str, str], result: dict[str, str]) -> bool:
+    changed = False
+    for path_key, value in result.items():
+        if value == en_dict.get(path_key):
+            continue                       # 回退原文，不必動檔案
+        try:
+            write_power_text(document, path_key, value)
+        except (KeyError, IndexError, TypeError):
+            continue                       # 結構對不上就跳這一條，不連累整份檔案
+        changed = True
+    return changed
 
 
 _LOCALE_IN_PATH_RE = re.compile(r"(?<![A-Za-z0-9])([a-z]{2})_([a-z]{2,3})(?![A-Za-z0-9])")
@@ -430,6 +509,10 @@ def _locale_path_variants(path_in_jar: str | None) -> list[str]:
 
 
 def read_existing_target(target: TranslationTarget, lang_code: str) -> dict[str, str]:
+    if target.format == "apoli_power":
+        # 譯文與原文共用同一個欄位，沒有「既有譯文檔」這種東西。已經翻好的條目由
+        # 分類階段判為不需翻譯，不是靠這裡比對出來的。
+        return {}
     if target.output_mode == "jar_inject":
         # 文字型頁面（GuideME／Citadel）走自己的 codec。少了這一段，掃描階段會以為
         # 整本指南都沒翻過，估出來的待翻譯量遠大於實際要做的事——進度條因此永遠到
@@ -482,6 +565,9 @@ def process_target(
 
     if target.format in ("guideme_md", "citadel_txt"):
         return _process_jar_text_page(target, translator, cache, retry_count, cancel_check, on_pair_done, manual)
+
+    if target.format == "apoli_power":
+        return _process_power_json(target, translator, cache, retry_count, cancel_check, on_pair_done, manual)
 
     if target.format == "json_lang":
         en_dict = read_json_lang(target.source_file, target.path_in_jar)
@@ -556,6 +642,10 @@ def apply_manual_translations(
 
     if target.format == "patchouli_json":
         _apply_manual_patchouli(target, values)
+    elif target.format == "apoli_power":
+        document = read_power_document(target)
+        if _apply_power_text(document, {}, values):
+            write_power_document(target, document)
     elif target.format in _TEXT_PAGE_CODECS:
         _apply_manual_text_page(target, values)
     else:
@@ -695,11 +785,7 @@ def _process_patchouli(
                 on_pair_done(1)
             continue
         if ck in cache and is_usable_translation(src, cache[ck]):
-            if glossary is not None:
-                normalized = glossary.enforce(src, cache[ck])
-                if normalized != cache[ck]:
-                    run_log.detail(f"  ↳ 用語庫就地校正快取：{ck}")
-                    cache[ck] = normalized
+            _normalize_cached(cache, ck, src, glossary)
             write_patchouli_text(page, path_key, cache[ck])
             changed = True
             n_cached += 1

@@ -5,17 +5,26 @@ import re
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+from modpack_translator.pipeline.apoli_power import (
+    POWER_DIRS,
+    is_power_member,
+    looks_like_power_document,
+    read_power_text,
+)
 from modpack_translator.pipeline.citadel_book import extract_citadel_text
 from modpack_translator.pipeline.guide_md import extract_guide_text
 from modpack_translator.pipeline.preprocessor import (
     diff_keys,
+    loads_relaxed,
     parse_json_lang,
     parse_legacy_lang,
     parse_snbt_lang,
     read_patchouli_text,
     read_inline_snbt_text,
 )
+from modpack_translator import run_log
 
 
 @dataclass
@@ -49,6 +58,28 @@ def _read_member_text(zf: zipfile.ZipFile, path_in_jar: str) -> str | None:
     try:
         return zf.read(path_in_jar).decode("utf-8-sig")
     except (KeyError, UnicodeDecodeError):
+        return None
+
+
+def _power_namespace(path: Path) -> str:
+    """`…/data/<ns>/powers/…` 裡的 `<ns>`；資料包可以套好幾層資料夾，不能數層數。"""
+    parts = path.parts
+    for i in range(len(parts) - 3, -1, -1):
+        if parts[i] == "data" and parts[i + 2] in POWER_DIRS:
+            return parts[i + 1]
+    return path.parent.name
+
+
+def load_json_or_report(raw: str, where: str) -> Any | None:
+    """寬鬆解析 JSON；壞檔留一行紀錄再跳過。
+
+    以前壞檔是靜默跳過的，於是使用者只看得到「這個模組沒翻」，分不清是檔案本身
+    寫壞了、還是工具漏掉。一行紀錄的成本趨近於零，卻是這兩者唯一的分辨依據。
+    """
+    try:
+        return loads_relaxed(raw)
+    except json.JSONDecodeError as exc:
+        run_log.write(f"[警告] JSON 解析失敗，已略過：{where}\n           {exc}")
         return None
 
 
@@ -101,6 +132,7 @@ class ModpackScanner:
         targets.extend(self._scan_heracles(root, lang_code))
         targets.extend(self._scan_betterquesting(root, lang_code))
         targets.extend(self._scan_kubejs(root, lang_code))
+        targets.extend(self._scan_data_powers(root, lang_code))
 
         return targets
 
@@ -165,8 +197,93 @@ class ModpackScanner:
                                 output_lang_code=lang_code,
                                 target_path_in_jar=target_path,
                             ))
-        except (zipfile.BadZipFile, OSError):
-            pass
+
+                    elif is_power_member(parts):
+                        target = self._power_target(
+                            _read_member_text(zf, name),
+                            source_file=jar_path,
+                            path_in_jar=name,
+                            namespace=parts[1],
+                            where=f"{jar_path.name}!{name}",
+                            lang_code=lang_code,
+                        )
+                        if target is not None:
+                            targets.append(target)
+        except (zipfile.BadZipFile, OSError) as exc:
+            run_log.write(f"[警告] 壓縮檔讀取失敗，已略過：{jar_path}\n           {exc!r}")
+        return targets
+
+    # ------------------------------------------------------- Origins／Apoli 能力
+
+    def _power_target(
+        self,
+        raw: str | None,
+        source_file: Path,
+        path_in_jar: str | None,
+        namespace: str,
+        where: str,
+        lang_code: str,
+    ) -> TranslationTarget | None:
+        """能力／起源定義檔的翻譯目標。原地覆寫，不另開語言檔。
+
+        `data/` 沒有 locale 這個維度——能力名稱就寫在定義檔裡，玩家看到的就是那一份。
+        重跑時已譯過的條目會在分類階段被判為「不需翻譯」（值已是中文），所以原地
+        覆寫依然是冪等的。
+        """
+        if raw is None:
+            return None
+        data = load_json_or_report(raw, where)
+        if data is None or not looks_like_power_document(data):
+            return None
+        source = read_power_text(data)
+        if not source or not diff_keys(source, {}):
+            return None
+        return TranslationTarget(
+            source_file=source_file,
+            path_in_jar=path_in_jar,
+            mod_id=namespace,
+            format="apoli_power",
+            output_mode="jar_inject" if path_in_jar else "in_place",
+            output_lang_code=lang_code,
+            target_path_in_jar=path_in_jar,
+            target_file=None if path_in_jar else source_file,
+        )
+
+    def _scan_data_powers(self, game_root: Path, lang_code: str) -> list[TranslationTarget]:
+        """散檔形式的能力定義：資料包、KubeJS、OpenLoader。
+
+        整合包作者自己寫的能力多半在這裡，而且正因為是手寫的，`name`／`description`
+        才最常是字面英文而非 lang 鍵。
+
+        只找 `…/data/<ns>/powers|origins/**.json` 這個固定形狀，且限定在幾個放資料包
+        的資料夾底下——對整個遊戲根目錄 rglob 會連 saves 一起走一遍。
+        壓縮檔形式的資料包不處理：改寫 zip 需要重新打包，而現行備份只涵蓋
+        mods／資源包／任務設定，沒備份就動使用者的檔案是不能接受的。
+        """
+        targets: list[TranslationTarget] = []
+        for top in ("datapacks", "kubejs", "config", "global_packs", "global_data_packs"):
+            base = game_root / top
+            if not base.is_dir():
+                continue
+            for power_dir in POWER_DIRS:
+                for path in sorted(base.glob(f"**/data/*/{power_dir}/**/*.json")):
+                    if not path.is_file():
+                        continue
+                    try:
+                        raw = path.read_text(encoding="utf-8-sig")
+                    except (OSError, UnicodeDecodeError) as exc:
+                        run_log.write(f"[警告] 檔案讀取失敗，已略過：{path}\n           {exc!r}")
+                        continue
+                    target = self._power_target(
+                        raw,
+                        source_file=path,
+                        path_in_jar=None,
+                        namespace=_power_namespace(path),
+                        where=str(path),
+                        lang_code=lang_code,
+                    )
+                    if target is not None:
+                        targets.append(target)
         return targets
 
     # ------------------------------------------------------------ Citadel 圖鑑書
@@ -316,7 +433,11 @@ class ModpackScanner:
         try:
             source_raw = zf.read(source_path).decode("utf-8-sig")
             source = parse_json_lang(source_raw) if lang_ext == "json" else parse_legacy_lang(source_raw)
-        except (KeyError, UnicodeDecodeError, json.JSONDecodeError):
+        except (KeyError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            run_log.write(
+                f"[警告] 語言檔解析失敗，該模組本次不會被翻譯："
+                f"{Path(zf.filename or '?').name}!{source_path}\n           {exc!r}"
+            )
             return False
         if not source:
             return False
@@ -357,9 +478,12 @@ class ModpackScanner:
         source_path: str,
         existing_paths: list[str],
     ) -> bool:
-        try:
-            source_page = json.loads(zf.read(source_path).decode("utf-8-sig"))
-        except (json.JSONDecodeError, KeyError, UnicodeDecodeError):
+        raw = _read_member_text(zf, source_path)
+        if raw is None:
+            return False
+        source_page = load_json_or_report(
+            raw, f"{Path(zf.filename or '?').name}!{source_path}")
+        if source_page is None:
             return False
 
         source = read_patchouli_text(source_page)
@@ -372,7 +496,7 @@ class ModpackScanner:
             if path not in names:
                 continue
             try:
-                existing.update(read_patchouli_text(json.loads(zf.read(path).decode("utf-8-sig"))))
+                existing.update(read_patchouli_text(loads_relaxed(zf.read(path).decode("utf-8-sig"))))
             except (json.JSONDecodeError, UnicodeDecodeError):
                 continue
         return bool(diff_keys(source, existing))

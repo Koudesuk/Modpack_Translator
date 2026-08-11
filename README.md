@@ -1,4 +1,4 @@
-# Minecraft Modpack Translator v1.5.0
+# Minecraft Modpack Translator v1.5.1
 
 **Language / 語言：** English | [繁體中文](README_zh.md)
 
@@ -7,6 +7,19 @@
 ---
 
 A tool that automatically translates Minecraft modpacks from English (`en_us`) to Traditional Chinese (`zh_tw`) — language files, quest books, and in-game guidebooks — using a fine-tuned GGUF model with LoRA adaptation. Supports both a graphical user interface and a command-line interface.
+
+---
+
+## What's New in v1.5.1
+
+| Fix | Description |
+|---|---|
+| **Origins / Apoli powers** | `data/<ns>/powers` and `data/<ns>/origins` are now scanned. Origins lets `name` and `description` be written as literal text instead of lang keys, and those strings were invisible to every previous version — power panels stayed fully English with nothing in the failed-items list to show for it. Condition, action and modifier subtrees are never touched: the `name` in there is an identifier such as a damage type, and translating it breaks the power without any error |
+| **Single words are no longer dropped** | The old rule treated "no whitespace" as "identifier", so quest titles like `Bookshelves`, `Carrots` and `Cooking` were silently discarded — visible in game, absent from the failed-items list. Identifier detection now requires an actual separator, and everything else goes through the same classifier the lang files use |
+| **Unreadable files leave a trace** | Trailing commas are accepted everywhere now (the game's GSON reader tolerates them; Python's `json` does not). Files that are genuinely broken get a line in `outputs/run.log` naming the file and the parse error, instead of being skipped in silence |
+| **No invented line breaks** | Line breaks the model adds on its own are removed when the source is a single line. Cached entries are repaired in place on reuse |
+| **Dropped-clause detection** | A translation that omits an entire clause used to pass every structural check. Output that is drastically shorter than a multi-clause source is now rejected, kept in English and listed for manual correction. Measured against 144,580 shipped en→zh pairs, the false-positive rate is 0.022% |
+| **Case-insensitive glossary lookup** | Glossary hints were matched case-sensitively, so a source writing `saturation value` never received the `Saturation` entry and the model was left guessing. Matching is now case-insensitive for prompt hints (substitution stays case-sensitive so identifiers are never damaged) |
 
 ---
 
@@ -119,7 +132,7 @@ The setup script installs uv-managed CPython 3.12, creates `.venv/`, detects you
 setup_windows.bat
 ```
 
-After setup, Windows builds a versioned launcher such as `模組包翻譯器v1.5.0.exe` in the project folder. Double-click it to start the app without opening a terminal. If the launcher is missing, run setup again or build it manually:
+After setup, Windows builds a versioned launcher such as `模組包翻譯器v1.5.1.exe` in the project folder. Double-click it to start the app without opening a terminal. If the launcher is missing, run setup again or build it manually:
 
 ```bat
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_windows_launcher.ps1
@@ -215,7 +228,7 @@ Launch the graphical interface:
 uv run python main.py
 ```
 
-On Windows, users can also double-click the versioned launcher EXE, such as `模組包翻譯器v1.5.0.exe`. It checks that setup has been run, launches `uv run python main.py` in the background, and writes launcher errors to `.runtime/launcher.log`.
+On Windows, users can also double-click the versioned launcher EXE, such as `模組包翻譯器v1.5.1.exe`. It checks that setup has been run, launches `uv run python main.py` in the background, and writes launcher errors to `.runtime/launcher.log`.
 
 On startup, the app checks the latest GitHub Release in the background. If a newer release package is available, it shows an update dialog; if there is no update, it shows nothing. Auto-update downloads the release ZIP, verifies its SHA256 file when present, applies the new source files, removes the old `.venv` and stale local backend runtime files, runs setup again, and then restarts the app.
 
@@ -241,6 +254,7 @@ On startup, the app checks the latest GitHub Release in the background. If a new
 - Quest configs → `quests_bak/`
 - Resource packs → `resourcepacks_bak/`
 - Shader packs → `shaderpacks_bak/`
+- Data pack files edited in place → `data_bak/`
 
 **Failed items** (strings that could not be translated after all retries) are written to `Failed Items/<mod_name>.txt` for review. If no items fail, this folder is not created. When translation finishes with failures, the app lists every one of them so you can fill in translations by hand; clicking apply writes them straight back into the modpack. Manual corrections are stored in `outputs/manual_translations.json` and take priority on later runs, so the model never overwrites them.
 
@@ -300,6 +314,7 @@ The CLI shares the same run log as the GUI: every run clears and rewrites `outpu
 | `heracles_inline_snbt` | `.snbt` | Heracles inline text fields |
 | `bq_lang` | `.lang` | Better Questing language format (1.12) |
 | `kubejs_json` | `.json` | KubeJS script translation files |
+| `apoli_power` | `.json` | Origins/Apoli power and origin definitions (`data/<ns>/powers`, `data/<ns>/origins`) whose `name`/`description` are written as literal text instead of lang keys. Condition, action and modifier subtrees are never touched — the `name` in there is an identifier such as a damage type, and translating it breaks the power silently |
 
 ### Scan Scope
 
@@ -307,6 +322,7 @@ The CLI shares the same run log as the GUI: every run clears and rewrites `outpu
 |---|---|
 | `mods/*.jar` | Translations injected back into the JAR; originals backed up to `mods_bak/` |
 | `config/`, `kubejs/` | Written in place; originals backed up to `quests_bak/` |
+| `datapacks/`, `config/openloader/`, `global_packs/` | Power definitions in folder-based data packs are written in place; originals backed up to `data_bak/`. ZIP data packs are not handled |
 | `resourcepacks/` | ZIP packs are injected back into the ZIP, folder packs are written in place; originals backed up to `resourcepacks_bak/` |
 | `shaderpacks/` | `shaders/lang/` of folder-based packs is written in place; originals backed up to `shaderpacks_bak/`. ZIP shader packs are not handled |
 
@@ -351,7 +367,7 @@ Nothing under `outputs/` is ever overwritten by auto-update.
 **Q: How do ZIP users update the app?**
 - Open the app. If a newer GitHub Release exists, click **Auto update** in the update dialog.
 - The updater preserves user outputs and backups, but rebuilds `.venv` and the local backend setup to avoid dependency conflicts.
-- Release ZIPs are generated by GitHub Actions from tags such as `v1.5.0`.
+- Release ZIPs are generated by GitHub Actions from tags such as `v1.5.1`.
 
 **Q: Windows Defender flags the launcher as malware and blocks it.**
 - This is a false positive. The launcher is a small, unsigned executable, and antivirus machine-learning models sometimes flag such files (v1.4.1 was misidentified as `Trojan:Win32/Suschil!rfn`).

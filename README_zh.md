@@ -1,4 +1,4 @@
-# Minecraft模組包翻譯器 v1.5.0
+# Minecraft模組包翻譯器 v1.5.1
 
 **Language / 語言：** [English](README.md) | 繁體中文
 
@@ -7,6 +7,19 @@
 ---
 
 自動將 Minecraft 模組包從英文（`en_us`）翻譯為繁體中文（`zh_tw`）的工具，涵蓋語言檔、任務書與遊戲內指南書，底層使用 GGUF 格式的微調模型搭配 LoRA 適配器。提供圖形化介面（GUI）與命令列介面（CLI）。
+
+---
+
+## v1.5.1 更新內容
+
+| 修正 | 說明 |
+|---|---|
+| **Origins／Apoli 能力** | 新增掃描 `data/<ns>/powers` 與 `data/<ns>/origins`。Origins 允許 `name`、`description` 直接寫字面文字而不走 lang 鍵，這些字串在舊版是完全看不見的——能力面板整片英文，失敗清單裡卻什麼都查不到。條件、動作、修飾符子樹一律不碰：那裡的 `name` 是傷害類型之類的 ID，翻了能力會失效而且不會報錯 |
+| **單字不再被靜默丟掉** | 舊規則把「不含空白」當成「識別字」，於是 `Bookshelves`、`Carrots`、`Cooking` 這類任務標題被直接丟掉——玩家在任務書裡看得到，失敗清單裡卻沒有。識別字判定改為必須有分隔符，其餘交給 lang 檔在用的同一套判定 |
+| **壞檔會留下紀錄** | 尾逗號現在一律容忍（遊戲的 GSON 讀得動，Python 的 `json` 不收）。真正寫壞的檔案會在 `outputs/run.log` 留一行，標明檔案與解析錯誤位置，不再無聲跳過 |
+| **不再憑空多出換行** | 原文是單行時，模型自己加的換行一律移除。命中舊快取時也就地修正 |
+| **漏譯偵測** | 整個子句被吃掉的譯文，過去所有結構性檢查都攔不到。現在多子句原文若譯出的內容量明顯不足，會退回原文並列入手動補譯。以 144,580 條模組出貨的既有中英對照實測，誤判率 0.022% |
+| **用語庫比對不分大小寫** | 用語提示原本是大小寫敏感的，原文寫 `saturation value` 就永遠命中不到 `Saturation` 詞條，模型只能自己猜。prompt 注入改為不分大小寫（事後替換維持大小寫敏感，以免動壞程式識別字） |
 
 ---
 
@@ -121,7 +134,7 @@ cuDNN **不需要**安裝。
 setup_windows.bat
 ```
 
-初始化完成後，Windows 會在專案資料夾建立版本化 launcher，例如 `模組包翻譯器v1.5.0.exe`。之後直接雙擊它即可啟動程式，不需要開終端機手動輸入命令。若 launcher 遺失，請重新執行 setup，或手動建立：
+初始化完成後，Windows 會在專案資料夾建立版本化 launcher，例如 `模組包翻譯器v1.5.1.exe`。之後直接雙擊它即可啟動程式，不需要開終端機手動輸入命令。若 launcher 遺失，請重新執行 setup，或手動建立：
 
 ```bat
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_windows_launcher.ps1
@@ -217,7 +230,7 @@ paths:
 uv run python main.py
 ```
 
-Windows 使用者也可以直接雙擊版本化 launcher，例如 `模組包翻譯器v1.5.0.exe`；它會先檢查是否已完成 setup，再在背景執行 `uv run python main.py`，launcher 錯誤會寫到 `.runtime/launcher.log`。
+Windows 使用者也可以直接雙擊版本化 launcher，例如 `模組包翻譯器v1.5.1.exe`；它會先檢查是否已完成 setup，再在背景執行 `uv run python main.py`，launcher 錯誤會寫到 `.runtime/launcher.log`。
 
 啟動時，程式會在背景檢查最新 GitHub Release。有新版 release package 時才顯示更新視窗；沒有更新時不顯示任何訊息。自動更新會下載 release ZIP，若有 SHA256 檔會先驗證，接著套用新版原始碼、移除舊 `.venv` 與過期的本機後端 runtime 檔案、重新執行 setup，完成後再啟動新版程式。
 
@@ -243,6 +256,7 @@ Windows 使用者也可以直接雙擊版本化 launcher，例如 `模組包翻�
 - 任務設定 → `quests_bak/`
 - 資源包 → `resourcepacks_bak/`
 - 光影包 → `shaderpacks_bak/`
+- 就地改寫的資料包檔案 → `data_bak/`
 
 **失敗項目**（重試後仍無法翻譯的字串）會寫入 `Failed Items/<模組名稱>.txt`，供使用者檢查。若無失敗項目，此資料夾不會被建立。翻譯結束時若有失敗項目，程式會列出所有字串讓您逐條手動補譯，按「套用」即直接寫回模組包；補上的譯文存於 `outputs/manual_translations.json`，下次翻譯會優先沿用、不會被模型蓋掉。
 
@@ -302,6 +316,7 @@ CLI 與 GUI 共用同一份執行紀錄：每次執行會清空並重寫 `output
 | `heracles_inline_snbt` | `.snbt` | Heracles 直接文字欄位 |
 | `bq_lang` | `.lang` | Better Questing 語言格式（1.12） |
 | `kubejs_json` | `.json` | KubeJS 腳本翻譯檔 |
+| `apoli_power` | `.json` | Origins／Apoli 能力與起源定義（`data/<ns>/powers`、`data/<ns>/origins`）中直接寫成字面文字的 `name`／`description`。條件、動作、修飾符子樹一律不碰——那裡的 `name` 是傷害類型之類的 ID，翻了能力會安靜失效 |
 
 ### 掃描範圍
 
@@ -309,6 +324,7 @@ CLI 與 GUI 共用同一份執行紀錄：每次執行會清空並重寫 `output
 |---|---|
 | `mods/*.jar` | 譯文注入回 jar，原檔備份至 `mods_bak/` |
 | `config/`、`kubejs/` | 就地寫入，原檔備份至 `quests_bak/` |
+| `datapacks/`、`config/openloader/`、`global_packs/` | 資料夾型資料包的能力定義就地寫入，原檔備份至 `data_bak/`。zip 型資料包不處理 |
 | `resourcepacks/` | zip 包注入回 zip、資料夾包就地寫入，原檔備份至 `resourcepacks_bak/` |
 | `shaderpacks/` | 就地寫入資料夾型光影包的 `shaders/lang/`，原檔備份至 `shaderpacks_bak/`。zip 光影包目前不處理 |
 
@@ -353,7 +369,7 @@ CLI 與 GUI 共用同一份執行紀錄：每次執行會清空並重寫 `output
 **Q：ZIP 使用者要怎麼更新？**
 - 開啟程式即可。如果 GitHub Release 有新版，更新視窗會出現，按 **自動更新**。
 - updater 會保留使用者輸出與備份，但會重建 `.venv` 和本機後端設定，避免依賴衝突。
-- Release ZIP 由 GitHub Actions 根據 `v1.5.0` 這類 tag 自動產生。
+- Release ZIP 由 GitHub Actions 根據 `v1.5.1` 這類 tag 自動產生。
 
 **Q：Windows Defender 說 launcher 是病毒，擋著不讓執行。**
 - 這是誤判。launcher 是一支未經數位簽章的小型執行檔，防毒軟體的機器學習模型有時會把這類檔案標記為威脅（v1.4.1 曾被誤判為 `Trojan:Win32/Suschil!rfn`）。

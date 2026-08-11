@@ -14,6 +14,7 @@ from modpack_translator import run_log
 from modpack_translator.config import load_config
 from modpack_translator.pipeline.patcher import (
     backup_asset_packs,
+    backup_data_files,
     backup_mods,
     backup_quest_configs,
     touches_asset_packs,
@@ -156,16 +157,14 @@ def main():
     if args.max_steps > 0:
         all_targets = all_targets[:args.max_steps]
 
+    # 直接數實際掃到的格式，不另外維護一份清單——寫死的那份已經漏過兩次
+    # （guideme_md、citadel_txt 加進來時都沒同步），漏列的格式會安靜地不出現在摘要裡。
     _say(f"找到 {len(all_targets)} 個翻譯目標")
-    for fmt in (
-        "json_lang", "legacy_lang", "patchouli_json",
-        "ftbq_snbt", "ftbq_inline_snbt",
-        "heracles_snbt", "heracles_inline_snbt",
-        "bq_lang", "kubejs_json",
-    ):
-        count = sum(1 for t in all_targets if t.format == fmt)
-        if count:
-            _say(f"  {fmt}: {count}")
+    counts: dict[str, int] = {}
+    for target in all_targets:
+        counts[target.format] = counts.get(target.format, 0) + 1
+    for fmt, count in sorted(counts.items(), key=lambda kv: -kv[1]):
+        _say(f"  {fmt}: {count}")
 
     if args.dry_run:
         _dry_run_report(all_targets, cfg.language.code)
@@ -185,6 +184,13 @@ def main():
     if touches_asset_packs((t.source_file for t in all_targets), game_root):
         backed_up = backup_asset_packs(game_root)
         _say(f"已備份 {backed_up} 個資源包／光影包至 *_bak/")
+    data_files = [
+        t.source_file for t in all_targets
+        if t.output_mode == "in_place" and t.format == "apoli_power"
+    ]
+    if data_files:
+        backed_up = backup_data_files(game_root, data_files)
+        _say(f"已備份 {backed_up} 個資料包檔案至 data_bak/")
 
     _say("正在連線或啟動本機模型服務…")
     translator = GGUFTranslator(cfg.model, cfg.language.system_prompt)

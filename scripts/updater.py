@@ -37,6 +37,7 @@ PRESERVE_TOP_LEVEL = {
     "Failed Items",
     "mods_bak",
     "quests_bak",
+    "data_bak",
     "data",
     "logs",
 }

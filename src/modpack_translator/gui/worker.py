@@ -12,6 +12,7 @@ from PySide6.QtCore import QThread, Signal
 from modpack_translator.config import AppConfig
 from modpack_translator.pipeline.patcher import (
     backup_asset_packs,
+    backup_data_files,
     backup_mods,
     backup_quest_configs,
     touches_asset_packs,
@@ -207,6 +208,13 @@ class TranslateWorker(QThread):
             if touches_asset_packs((t.source_file for t in self._targets), game_root):
                 backed_up = backup_asset_packs(game_root)
                 self.log.emit(f"已備份 {backed_up} 個資源包／光影包至 *_bak/")
+            data_files = [
+                t.source_file for t in self._targets
+                if t.output_mode == "in_place" and t.format == "apoli_power"
+            ]
+            if data_files:
+                backed_up = backup_data_files(game_root, data_files)
+                self.log.emit(f"已備份 {backed_up} 個資料包檔案至 data_bak/")
 
             self.log.emit("正在連線或啟動本機模型服務，請稍候…")
             translator = None

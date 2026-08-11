@@ -122,6 +122,28 @@ def backup_quest_configs(game_root: Path) -> int:
     return count
 
 
+def backup_data_files(game_root: Path, files: Iterable[Path]) -> int:
+    """就地改寫資料檔（Origins 能力定義之類）前，逐檔備份到 `data_bak/<相對路徑>`。
+
+    刻意逐檔而非整棵複製：這些檔案散在 datapacks／config／kubejs 底下，那幾個資料夾
+    可能夾著整包世界資料或結構檔，整棵複製會讓備份本身變成災難。已存在的備份不覆蓋
+    ——第一次備份的才是使用者的原始檔。
+    """
+    backup_root = game_root / "data_bak"
+    count = 0
+    for source in files:
+        source = Path(source)
+        if not source.is_file() or not source.is_relative_to(game_root):
+            continue
+        destination = backup_root / source.relative_to(game_root)
+        if destination.exists():
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        count += 1
+    return count
+
+
 def patch_modonomicon_unicode_fonts(game_root: Path) -> int:
     """Wire Modonomicon's empty unifont include to Minecraft's CJK-capable unifont."""
     mods_dir = game_root / "mods"

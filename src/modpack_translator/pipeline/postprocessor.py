@@ -35,4 +35,25 @@ def process(raw_translation: str, source_text: str, tokens: list[str]) -> tuple[
             if not _SOFT_TOKEN_RE.match(token):
                 return source_text, False
 
-    return text, True
+    return normalize_line_shape(text, source_text), True
+
+
+_CJK = "㐀-鿿"
+_CJK_JOIN_RE = re.compile(rf"(?<=[{_CJK}])[ \t]*\n+[ \t]*(?=[{_CJK}])")
+_ANY_NEWLINE_RE = re.compile(r"[ \t]*\n+[ \t]*")
+
+
+def normalize_line_shape(text: str, source_text: str) -> str:
+    """原文是單行時，把模型自己加的換行拿掉。
+
+    Origins 能力面板、物品 tooltip 這些地方本來就會自動折行，多出來的換行只會讓
+    同一份清單忽寬忽窄。原文本來就有換行的一律不動——那是作者排的版，
+    `_preserves_internal_newlines` 另外負責確認它沒被壓掉。
+
+    注意 `source_text` 是編碼後的原文：字面的兩字元 "\\n" 早就變成 token 了，
+    這裡看到的 `\\n` 必定是真換行（0x0A）。
+    """
+    if "\n" not in text or "\n" in source_text:
+        return text
+    text = _CJK_JOIN_RE.sub("", text)        # 中文之間直接接起來，不留空格
+    return _ANY_NEWLINE_RE.sub(" ", text).strip()

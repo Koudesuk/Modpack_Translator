@@ -68,6 +68,9 @@ _FMT_NAME_MAP: dict[str, str] = {
     "heracles_inline_snbt": "Heracles inline SNBT",
     "bq_lang":              "Better Questing lang",
     "kubejs_json":          "KubeJS JSON",
+    "apoli_power":          "Origins 能力定義",
+    "guideme_md":           "GuideME 指南",
+    "citadel_txt":          "Citadel 圖鑑書",
 }
 
 

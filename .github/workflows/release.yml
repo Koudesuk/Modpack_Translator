@@ -54,6 +54,8 @@ jobs:
           $missing = @()
           foreach ($f in @(
             "assets/glossary/minecraft_zh_tw.json",
+            "assets/glossary/modnames_zh_tw.json",
+            "src/modpack_translator/pipeline/apoli_power.py",
             "src/modpack_translator/run_log.py",
             "src/modpack_translator/gui/failed_items_dialog.py",
             "src/modpack_translator/gui/glossary_dialog.py",
@@ -88,7 +90,7 @@ jobs:
 
           $excludeDirs = @(
             ".git", ".github", ".venv", ".runtime", "__pycache__",
-            "outputs", "Failed Items", "mods_bak", "quests_bak",
+            "outputs", "Failed Items", "mods_bak", "quests_bak", "data_bak",
             "data", "logs", "dist", "build", "wheels"
           )
           $excludeFiles = @("*.pyc", "*.pyo", "*.log", ".env", ".env.*")

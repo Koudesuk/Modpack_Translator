@@ -147,7 +147,38 @@ def rejection_reason(source: str, target: str) -> str | None:
     leaked = _leaked_words(source, target)
     if leaked:
         return "英文殘留未譯：" + "、".join(sorted(leaked)[:4])
+    if _looks_content_dropped(source, target):
+        return "譯文內容明顯短少（原文有整段沒被譯出）"
     return None
+
+
+# 長度只拿來偵測「整個子句被吃掉」，不當品質分數。
+#
+# 實例：「Heal Living Creatures For 4 Damage, Or Harm Undead Creatures」被譯成
+# 「造成 4 點傷害」——治療變成傷害、後半整段消失，而且每一條既有規則都攔不到：
+# 有中文、token 沒少、格式引數沒變多。這種譯文比留英文更糟，因為它是錯的。
+#
+# 中文比英文短是常態（一個漢字約當 2–3 個字母），所以門檻壓得很低：正常譯文的
+# 加權比落在 0.55 以上，連「breathe underwater without problems → 讓你能在水下呼吸」
+# 這種高度壓縮的也有 0.37。0.30 以下的只剩真的漏譯。
+# 短語不查——字數少的本來就浮動大，查了只會誤殺。
+_CONTENT_LOSS_MIN_WORDS = 8
+_CONTENT_LOSS_RATIO = 0.30
+_CJK_INFORMATION_WEIGHT = 2.5
+
+
+def _looks_content_dropped(source: str, target: str) -> bool:
+    words = re.findall(r"[A-Za-z][A-Za-z'-]+", _PLACEHOLDERS.sub(" ", source))
+    if len(words) < _CONTENT_LOSS_MIN_WORDS:
+        return False
+    source_letters = sum(len(word) for word in words)
+    if not source_letters:
+        return False
+    body = _PLACEHOLDERS.sub(" ", target)
+    # 保留的英文專有名詞照樣算內容，否則「Applied Energistics 2 控制器」會被誤殺。
+    weight = (len(_CJK_CHAR_RE.findall(body)) * _CJK_INFORMATION_WEIGHT
+              + len(re.findall(r"[A-Za-z]", body)))
+    return weight < source_letters * _CONTENT_LOSS_RATIO
 
 
 def _preserves_internal_newlines(source: str, target: str) -> bool:
@@ -756,22 +787,34 @@ def _unsafe_keys(en_dict: dict[str, str], zh_dict: dict[str, str]) -> set[str]:
 
 # ------------------------------------------------------------------ readers
 
-_JSON_LINE_COMMENT_RE = re.compile(r"(^|\s)//[^\n]*")
+# `//` 不要求前面有空白：`{// 註解` 這種貼著大括號寫的一樣要剝掉。這條只會套用在
+# 字串字面值「以外」的片段上，而 JSON 的結構區只有括號、逗號、數字與空白——
+# 那裡出現的 `//` 不可能是別的東西。
+_JSON_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
 _JSON_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 _JSON_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
 
 
-def parse_json_lang(raw: str) -> dict[str, str]:
-    """解析語言 JSON，並容忍遊戲讀得動、`json.loads` 卻拒收的寫法。
+def loads_relaxed(raw: str) -> Any:
+    """解析 JSON，並容忍遊戲讀得動、`json.loads` 卻拒收的寫法。
 
-    Minecraft 用 GSON 的寬鬆模式讀語言檔，所以 `//` 註解、區塊註解與尾逗號在遊戲
-    裡都能正常載入。嚴格解析失敗等於整個檔案靜默跳過、該模組全程英文——寧可多花
-    一次寬鬆重試，也不要無聲漏翻。
+    Minecraft 全程用 GSON 的寬鬆模式讀 `assets/` 與 `data/`，遊戲載得動、Python
+    卻拒收的寫法有三種，而且要一起處理才有意義：
+
+    * `//` 與 `/* */` 註解、尾逗號 → 靠 `_relax_json` 移除。
+    * 字串裡直接夾生的換行等控制字元 → 靠 `strict=False`。ShoulderSurfing 的
+      `en_us.json` 就是這樣，遊戲讀得好好的，工具卻整份跳過、該模組全程英文。
+
+    嚴格解析失敗等於整個檔案靜默跳過，寧可多跑一次寬鬆重試。
     """
     try:
-        data = json.loads(raw)
+        return json.loads(raw)
     except json.JSONDecodeError:
-        data = json.loads(_relax_json(raw))
+        return json.loads(_relax_json(raw), strict=False)
+
+
+def parse_json_lang(raw: str) -> dict[str, str]:
+    data = loads_relaxed(raw)
     if not isinstance(data, dict):
         raise json.JSONDecodeError("語言檔不是 JSON 物件", raw[:80], 0)
     return {k: v for k, v in data.items() if isinstance(v, str)}
@@ -791,7 +834,7 @@ def _relax_json(raw: str) -> str:
 
 def _strip_json_comments(chunk: str) -> str:
     chunk = _JSON_BLOCK_COMMENT_RE.sub(" ", chunk)
-    return _JSON_LINE_COMMENT_RE.sub(r"\1", chunk)
+    return _JSON_LINE_COMMENT_RE.sub("", chunk)
 
 
 def parse_legacy_lang(raw: str) -> dict[str, str]:
@@ -1255,11 +1298,15 @@ def _json_escape(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)[1:-1]
 
 
+# \u8b58\u5225\u5b57\uff1a\u5168\u5c0f\u5beb\u4e14\u7531\u5206\u9694\u7b26\u63a5\u8d77\u4f86\uff08`quest_reward`\u3001`ftbquests/chapter`\uff09\u3002
+# \u4e00\u5b9a\u8981\u6709\u5206\u9694\u7b26\u2014\u2014\u820a\u898f\u5247\u662f\u300c\u4e0d\u542b\u7a7a\u767d\u5c31\u7576\u8b58\u5225\u5b57\u300d\uff0c\u65bc\u662f Bookshelves\u3001Carrots\u3001
+# Cooking \u9019\u4e9b\u4efb\u52d9\u66f8\u6a19\u984c\u5168\u88ab\u975c\u9ed8\u4e1f\u6389\uff0c\u73a9\u5bb6\u5728\u66f8\u88e1\u770b\u5f97\u5230\uff0c\u5931\u6557\u6e05\u55ae\u88e1\u537b\u67e5\u7121\u6b64\u5b57\u4e32\u3002
+_SNAKE_CASE_ID_RE = re.compile(r"[a-z0-9]+(?:[_\-/][a-z0-9]+)+")
+
+
 def _is_translatable_inline_text(value: str) -> bool:
     text = value.strip()
     if len(text) < 2:
-        return False
-    if re.fullmatch(r"[a-z0-9_.:/#\-]+", text, re.IGNORECASE):
         return False
     if text.startswith(("{", "[", "$(", "#")):
         return False
@@ -1267,4 +1314,8 @@ def _is_translatable_inline_text(value: str) -> bool:
         return False
     if re.search(r"[\u3400-\u9fff]", text):
         return False
-    return bool(re.search(r"[A-Za-z]", text))
+    if _SNAKE_CASE_ID_RE.fullmatch(text):
+        return False
+    # \u5176\u9918\u4e00\u5f8b\u4ea4\u7d66\u5171\u7528\u5224\u5b9a\uff0c\u884c\u70ba\u624d\u6703\u8ddf lang \u6a94\u4e00\u81f4\uff1a\u8cc7\u6e90\u8def\u5f91\u3001lang \u9375\u3001\u8272\u78bc\u3001
+    # \u55ae\u4f4d\u7247\u8a9e\u90fd\u5728\u90a3\u908a\u64cb\u6389\uff0c\u9019\u88e1\u4e0d\u5fc5\u518d\u990a\u7b2c\u4e8c\u4efd\u898f\u5247\u3002
+    return _has_translatable_text(text)
