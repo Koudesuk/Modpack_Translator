@@ -46,6 +46,16 @@ jobs:
             throw "pyproject.toml version does not match $version"
           }
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      # Install from the committed lockfile on the same platform as end users.
+      # This catches stale or hand-edited wheel URLs before publishing the archive.
+      - name: Validate locked environment
+        shell: pwsh
+        run: |
+          uv sync --locked --managed-python --python 3.12 --inexact --no-install-package llama-cpp-python
+
       # checkout 只會取出 git 追蹤的檔案。新模組若忘了 git add，這裡就會 ImportError，
       # 而不是等到使用者下載後才發現程式打不開。也一併確認用語庫這類資料檔真的在包裡。
       - name: Verify the checkout is complete
@@ -69,10 +79,9 @@ jobs:
             throw "These files are missing from the checkout (forgot to git add?):`n  " + ($missing -join "`n  ")
           }
 
-          pip install --quiet PySide6 pydantic pyyaml openai
           $env:PYTHONPATH = "src;."
           $env:QT_QPA_PLATFORM = "offscreen"
-          python -c "import modpack_translator.gui.main_window; print('import OK')"
+          uv run --locked python -c "import modpack_translator.gui.main_window; print('import OK')"
           if ($LASTEXITCODE -ne 0) { throw "The app cannot be imported from a clean checkout." }
 
       - name: Build Windows launcher

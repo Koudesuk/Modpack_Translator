@@ -347,7 +347,7 @@ wheels = [
 
 [[package]]
 name = "modpack-translator"
-version = "1.5.1"
+version = "1.5.2"
 source = { virtual = "." }
 dependencies = [
     { name = "fastapi" },
