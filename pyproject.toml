@@ -1,6 +1,6 @@
 [project]
 name = "modpack-translator"
-version = "1.5.2"
+version = "1.5.3"
 description = "Minecraft modpack translator (en_us → zh_tw) using GGUF model inference"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -829,6 +829,17 @@ def failed_target_name(target: TranslationTarget) -> str:
 
 
 _FAILED_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_FAILED_FILENAME_PREFIX_MAX = 48
+
+
+def _failed_item_filename(target_name: str) -> str:
+    """Return a short, deterministic Windows-safe failed-items filename."""
+    target_parts = target_name.split("__", 2)
+    label = "__".join(target_parts[:2])
+    prefix = _FAILED_FILENAME_RE.sub("_", label).strip("._-")
+    prefix = prefix[:_FAILED_FILENAME_PREFIX_MAX].rstrip("._-") or "failed_items"
+    digest = hashlib.sha1(target_name.encode("utf-8")).hexdigest()[:12]
+    return f"{prefix}_{digest}.txt"
 
 
 def _clear_failed_items(output_dir: Path) -> None:
@@ -857,15 +868,9 @@ def _write_failed_items(
         if not items:
             continue
         category = _failed_item_category(target_name, items)
-        safe_name = _FAILED_FILENAME_RE.sub("_", target_name).strip("._")
-        if not safe_name:
-            safe_name = "failed_items"
-        if len(safe_name) > 180:
-            digest = hashlib.sha1(target_name.encode("utf-8")).hexdigest()[:12]
-            safe_name = f"{safe_name[:167]}_{digest}"
         category_dir = output_dir / category
         category_dir.mkdir(parents=True, exist_ok=True)
-        file_path = category_dir / f"{safe_name}.txt"
+        file_path = category_dir / _failed_item_filename(target_name)
         lines = [
             f"失敗項目清單：{target_name}",
             f"分類：{category}",
