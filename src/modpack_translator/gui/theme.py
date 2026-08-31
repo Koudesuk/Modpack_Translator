@@ -453,6 +453,19 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: 
 """
 
 
+_ACTIVE = LIGHT
+
+
+def active_palette() -> Palette:
+    """apply_theme() 最後套用的那一份 palette。
+
+    給少數必須在程式碼裡取色的地方用（QSS 選不到的東西，例如表格儲存格底色）。
+    直接記住套過哪一份，不去問 styleHints——它回報的是系統實際配色，使用者按了
+    主題切換鈕之後就跟程式選的那份對不起來了。
+    """
+    return _ACTIVE
+
+
 def restyle(widget: QWidget) -> None:
     """改完動態屬性後重新套用 QSS（屬性選擇器才會重新評估）。"""
     style = widget.style()
@@ -467,10 +480,12 @@ def apply_theme(mode: str) -> None:
     mode 為 "light" 或 "dark"；原生色彩配置讓 Fusion 繪製的元件
     （如 spinbox 箭頭）也跟著深淺色，QSS 則負責現代外觀。
     """
+    global _ACTIVE
     app = QApplication.instance()
     if app is None:
         return
     palette = PALETTES.get(mode, LIGHT)
+    _ACTIVE = palette
     scheme = Qt.ColorScheme.Dark if mode == "dark" else Qt.ColorScheme.Light
     app.styleHints().setColorScheme(scheme)
     app.setStyleSheet(build_stylesheet(palette))

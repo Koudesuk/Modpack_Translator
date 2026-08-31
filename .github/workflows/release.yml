@@ -16,6 +16,7 @@ permissions:
 
 jobs:
   package:
+    if: github.repository == 'Koudesuk/Modpack_Translator'
     runs-on: windows-latest
     steps:
       - name: Resolve tag
@@ -36,7 +37,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.version.outputs.tag }}
+          fetch-depth: 0
           lfs: true
+
+      - name: Verify the tag is on this repository's main branch
+        shell: pwsh
+        run: |
+          git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) { throw "Cannot fetch main to verify the tag." }
+          git merge-base --is-ancestor HEAD refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Tag ${{ steps.version.outputs.tag }} does not point at a commit on this repository's main branch. Refusing to publish."
+          }
 
       - name: Validate project version
         shell: pwsh
@@ -58,8 +70,6 @@ jobs:
           uv lock --check
           uv sync --locked --managed-python --python 3.12 --inexact --no-install-package llama-cpp-python
 
-      # checkout 只會取出 git 追蹤的檔案。新模組若忘了 git add，這裡就會 ImportError，
-      # 而不是等到使用者下載後才發現程式打不開。也一併確認用語庫這類資料檔真的在包裡。
       - name: Verify the checkout is complete
         shell: pwsh
         run: |
@@ -126,43 +136,15 @@ jobs:
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  Modpack_Translator-$tag.zip" | Set-Content "$zip.sha256" -NoNewline -Encoding ascii
 
-      - name: Read archive hash
-        id: hash
-        shell: pwsh
-        run: |
-          $tag = "${{ steps.version.outputs.tag }}"
-          $line = Get-Content "dist/Modpack_Translator-$tag.zip.sha256" -Raw
-          "sha256=$($line.Split(' ')[0])" >> $env:GITHUB_OUTPUT
-
+      # 發行說明只留一行 changelog 連結。
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}
-          generate_release_notes: true
-          append_body: true
+          generate_release_notes: false
           body: |
-            ### 檔案校驗
-
-            `Modpack_Translator-${{ steps.version.outputs.tag }}.zip`
-            SHA-256：`${{ steps.hash.outputs.sha256 }}`
-
-            ### 防毒軟體誤判說明
-
-            啟動器是一支未經數位簽章的小型執行檔。Windows Defender 等防毒軟體的
-            機器學習模型有時會把這類檔案標記為威脅（v1.4.1 曾被誤判為
-            `Trojan:Win32/Suschil!rfn`）。這是誤判，不是真的有惡意程式。
-
-            本版已針對誤判成因做了調整：啟動器不再透過 `cmd.exe` 啟動程式，
-            並加上了完整的版本與發行者中繼資料。
-
-            若仍被攔截：
-
-            1. 先用上面的 SHA-256 確認下載的檔案沒有被竄改。
-            2. 到 Windows 安全性 → 病毒與威脅防護 → 保護歷程記錄，選擇「允許」。
-            3. 歡迎把檔案回報給 Microsoft 以便修正誤判：
-               https://www.microsoft.com/en-us/wdsi/filesubmission
-            4. 若不想用啟動器，可以直接執行 `uv run python main.py`。
+            **Full Changelog**: https://github.com/${{ github.repository }}/commits/${{ steps.version.outputs.tag }}
           files: |
             dist/Modpack_Translator-${{ steps.version.outputs.tag }}.zip
             dist/Modpack_Translator-${{ steps.version.outputs.tag }}.zip.sha256

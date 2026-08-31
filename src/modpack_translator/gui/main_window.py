@@ -322,6 +322,7 @@ class MainWindow(QMainWindow):
         self.failed_btn.clicked.connect(self._reopen_failed_items)
         failed_help = _make_help_label(
             "重新開啟上次翻譯的失敗項目視窗，逐條手動補譯後直接寫回模組包。\n"
+            "條目太多時，用視窗右上角的匯出／匯入交給線上大模型批次翻好再讀回來。\n"
             "只在本次執行期間有效；換了模組包資料夾或關掉程式就會失效，\n"
             "此時請重新翻譯一次（已翻好的會走快取，很快）。"
         )
@@ -882,7 +883,9 @@ class MainWindow(QMainWindow):
             if cache_key(source) in saved
         }
 
-        dialog = FailedItemsDialog(rows, self, initial=initial)
+        dialog = FailedItemsDialog(
+            rows, self, initial=initial, export_dir=_PROJECT_ROOT / "Failed Items"
+        )
         if dialog.exec() != QDialog.Accepted:
             return
         filled = dialog.translations()
