@@ -1,7 +1,8 @@
-# Minecraft Modpack Translator v1.5.3
+# Minecraft Modpack Translator v1.5.4
 
 **Language / 語言：** English | [繁體中文](README_zh.md)
 
+[![Downloads](https://img.shields.io/github/downloads/Koudesuk/Modpack_Translator/total?label=downloads&color=brightgreen)](https://github.com/Koudesuk/Modpack_Translator/releases)
 [![Ko-fi](https://img.shields.io/badge/Support%20me%20on-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/koudesuk)
 
 ---
@@ -10,42 +11,13 @@ A tool that automatically translates Minecraft modpacks from English (`en_us`) t
 
 ---
 
-## What's New in v1.5.3
-
-| Fix | Description |
-|---|---|
-| **Failed Items on Windows** | Failed-item reports now use short, unique filenames. Reports work even when the app or modpack is stored under a deeply nested folder, while the full source location remains inside each report |
-| **Safer release packaging** | Release builds now verify the committed dependency lock and test the exact requested tag before publishing |
-
----
-
-## What's New in v1.5.2
-
-| Fix | Description |
-|---|---|
-| **Origins / Apoli powers** | `data/<ns>/powers` and `data/<ns>/origins` are now scanned. Origins lets `name` and `description` be written as literal text instead of lang keys, and those strings were invisible to every previous version — power panels stayed fully English with nothing in the failed-items list to show for it. Condition, action and modifier subtrees are never touched: the `name` in there is an identifier such as a damage type, and translating it breaks the power without any error |
-| **Single words are no longer dropped** | The old rule treated "no whitespace" as "identifier", so quest titles like `Bookshelves`, `Carrots` and `Cooking` were silently discarded — visible in game, absent from the failed-items list. Identifier detection now requires an actual separator, and everything else goes through the same classifier the lang files use |
-| **Unreadable files leave a trace** | Trailing commas are accepted everywhere now (the game's GSON reader tolerates them; Python's `json` does not). Files that are genuinely broken get a line in `outputs/run.log` naming the file and the parse error, instead of being skipped in silence |
-| **No invented line breaks** | Line breaks the model adds on its own are removed when the source is a single line. Cached entries are repaired in place on reuse |
-| **Dropped-clause detection** | A translation that omits an entire clause used to pass every structural check. Output that is drastically shorter than a multi-clause source is now rejected, kept in English and listed for manual correction. Measured against 144,580 shipped en→zh pairs, the false-positive rate is 0.022% |
-| **Case-insensitive glossary lookup** | Glossary hints were matched case-sensitively, so a source writing `saturation value` never received the `Saturation` entry and the model was left guessing. Matching is now case-insensitive for prompt hints (substitution stays case-sensitive so identifiers are never damaged) |
-
----
-
-## What's New in v1.5.0
+## What's New in v1.5.4
 
 | Feature | Description |
 |---|---|
-| **Glossary** | Ships 1,945 official Traditional Chinese Minecraft terms. When the whole source string matches a term, the translation is taken directly without invoking the model; for longer sentences, matching terms are appended to the prompt; leftover English terms are substituted afterwards. The GUI's "自訂用語…" button lets you add or override terms |
-| **GuideME guides** | In-game guide pages (`.md`) from AE2 (press G), Powah, and similar mods are now translated. JSX component tags and links are preserved verbatim |
-| **Citadel guidebooks** | Guidebook text (`.txt`) from Alex's Mobs / Alex's Caves is now translated. Chinese has no spaces for the renderer to break on, so the output is wrapped following the convention of each mod's own official translation, keeping text inside the page |
-| **Resource packs / shader packs** | `resourcepacks/` and `shaderpacks/` are now scanned. These packs add or override GUI text with keys that do not exist in any mod JAR, so without scanning them those strings stay English forever |
-| **Manual correction of failed items** | After translation, strings the model could not handle are listed for manual entry and written straight back into the modpack. Corrections are remembered and never overwritten on later runs; the "失敗項目…" button reopens the dialog as long as the app is still open and the modpack folder has not changed |
-| **Run log** | `outputs/run.log` records every translation result and every rejection reason for a single run, with no line limit. Attach this file when reporting an issue |
-| **Format-argument validation** | A translation that uses one more `%s` than the source makes the game throw when it reads that string. Such output is now rejected and retranslated, including pre-existing translations shipped with the mod |
-| **Duplicate JAR entry handling** | A few mod JARs contain duplicate entries for the same path. Rewrites now de-duplicate them (last entry wins) instead of producing a broken JAR |
-| **New CPU backend** | Switched to llama.cpp's official prebuilt binary, fixing the `0xc000001d` crash on some CPUs |
-| **Antivirus false-positive fix** | The launcher no longer starts the app through `cmd.exe` and now carries full version and publisher metadata |
+| **Batch translation of failed items** | The failed-items dialog can now export the whole list to a JSON file and read the result back. The rules an online model has to follow (keep placeholders, keep the line count, use official Minecraft terminology, leave untranslatable entries empty) are written into the file itself, so any online model — GPT, Claude, Grok, Gemini — only has to fill in the `zh_tw` field of each entry. Typing a few hundred corrections by hand is no longer the only option |
+| **Imported translations are checked, not trusted** | An import only fills the table; nothing reaches the modpack until you press "套用". Imported rows are tinted, and rows that fail the same validation the translator itself uses — dropped placeholders, collapsed line breaks, extra format arguments — get a warning colour, carry the reason in a tooltip, and can be isolated with "只顯示需確認的項目". Online models like to merge a multi-line string into one line, and that breaks the layout of quest and config panels |
+| **Forgiving import matching** | Entries are matched back by `id`, then source + key, then key, then the English text, so a reordered or partially returned file still lands on the right rows. A bare array or a plain `{key: translation}` map is accepted too. Anything that matches nothing is reported instead of being silently dropped |
 
 ---
 
@@ -141,7 +113,7 @@ The setup script installs uv-managed CPython 3.12, creates `.venv/`, detects you
 setup_windows.bat
 ```
 
-After setup, Windows builds a versioned launcher such as `模組包翻譯器v1.5.3.exe` in the project folder. Double-click it to start the app without opening a terminal. If the launcher is missing, run setup again or build it manually:
+After setup, Windows builds a versioned launcher such as `模組包翻譯器v1.5.4.exe` in the project folder. Double-click it to start the app without opening a terminal. If the launcher is missing, run setup again or build it manually:
 
 ```bat
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_windows_launcher.ps1
@@ -237,7 +209,7 @@ Launch the graphical interface:
 uv run python main.py
 ```
 
-On Windows, users can also double-click the versioned launcher EXE, such as `模組包翻譯器v1.5.3.exe`. It checks that setup has been run, launches `uv run python main.py` in the background, and writes launcher errors to `.runtime/launcher.log`.
+On Windows, users can also double-click the versioned launcher EXE, such as `模組包翻譯器v1.5.4.exe`. It checks that setup has been run, launches `uv run python main.py` in the background, and writes launcher errors to `.runtime/launcher.log`.
 
 On startup, the app checks the latest GitHub Release in the background. If a newer release package is available, it shows an update dialog; if there is no update, it shows nothing. Auto-update downloads the release ZIP, verifies its SHA256 file when present, applies the new source files, removes the old `.venv` and stale local backend runtime files, runs setup again, and then restarts the app.
 
@@ -254,9 +226,33 @@ On startup, the app checks the latest GitHub Release in the background. If a new
 
 | Button | Purpose |
 |---|---|
-| **自訂用語…** (Custom terms) | Pin a fixed translation for an English term. Custom terms take priority over the built-in official glossary, so they can override official names. Leaving a translation blank disables that term. Stored in `outputs/custom_glossary.json`, which auto-update never clears |
-| **失敗項目…** (Failed items) | Reopen the manual correction dialog. It pops up automatically once when translation finishes with failures; this button reopens it as long as the app is still open and the modpack folder has not changed |
-| **執行紀錄** (Run log) | Open `outputs/run.log`. Attach this file when reporting an issue |
+| **自訂用語…** (Custom terms) | Pin a fixed translation for an English term — see [Glossary and custom terms](#glossary-and-custom-terms) |
+| **失敗項目…** (Failed items) | Reopen the manual correction dialog — see [Failed items and manual correction](#failed-items-and-manual-correction) |
+| **執行紀錄** (Run log) | Open `outputs/run.log` — see [Run log](#run-log) |
+
+### Glossary and custom terms
+
+The app ships **1,945 official Traditional Chinese Minecraft terms**, used at three points so the result stays consistent:
+
+- When the whole source string matches a term, the translation is taken directly without invoking the model. This is the single biggest time saving, and it makes every vanilla name exactly right.
+- For longer sentences, matching terms are appended to the prompt so the model keeps the official wording.
+- Any English term the model leaves behind is substituted afterwards.
+
+Term matching for prompt hints is case-insensitive, so a source writing `saturation value` still receives the `Saturation` entry; the final substitution stays case-sensitive so identifiers are never damaged.
+
+"自訂用語…" pins your own translation for an English term. Priority is **custom > mod name > official glossary**, so a custom entry can override an official name; leaving a translation blank disables that term and lets the model translate it freely. Custom terms are stored in `outputs/custom_glossary.json`, which auto-update never clears, and they apply to the CLI as well.
+
+### Failed items and manual correction
+
+Strings that could not be translated after all retries are written to `Failed Items/`, grouped by why they are hard (`natural_text`, `markup_or_book_text`, `short_fragments`, `copy_or_skip_noise`). Report filenames are short and unique, so reports work even when the app or the modpack sits in a deeply nested folder; the full source target is named inside each report. If no items fail, the folder is not created.
+
+When translation finishes with failures, the app lists every one of them so you can fill in translations by hand; clicking "套用" writes them straight back into the modpack. Corrections are stored in `outputs/manual_translations.json` and take priority on later runs, so the model never overwrites them. The "失敗項目…" button reopens the dialog as long as the app is still open and the modpack folder has not changed.
+
+For long lists, use the export/import buttons at the top right of the dialog instead of typing:
+
+1. **匯出失敗項目** writes the whole list to JSON (default folder: `Failed Items/`). The file carries the rules the model has to follow: keep `id`, `source`, `key` and `en_us` untouched; keep placeholders such as `%s`, `%1$s`, `{0}`, `\n`, `§a`, `$(...)`, `[text](link)` and `<tag>` intact; keep the same number of lines; use official Minecraft Traditional Chinese names; leave `zh_tw` empty for anything that should not be translated.
+2. Hand the file to any online model (GPT, Claude, Grok, Gemini …) and ask it to fill in `zh_tw` only.
+3. **匯入翻譯完成之失敗項目** reads the result back into the table. Nothing is written to the modpack at this point — review the rows, edit them directly in the table where needed, then press "套用".
 
 **Original files are always backed up:**
 - Mod JARs → `mods_bak/`
@@ -265,9 +261,11 @@ On startup, the app checks the latest GitHub Release in the background. If a new
 - Shader packs → `shaderpacks_bak/`
 - Data pack files edited in place → `data_bak/`
 
-**Failed items** (strings that could not be translated after all retries) are written to `Failed Items/<mod_name>.txt` for review. If no items fail, this folder is not created. When translation finishes with failures, the app lists every one of them so you can fill in translations by hand; clicking apply writes them straight back into the modpack. Manual corrections are stored in `outputs/manual_translations.json` and take priority on later runs, so the model never overwrites them.
-
 > Manual correction is GUI-only; the CLI does not read `outputs/manual_translations.json`. Custom glossary terms (`outputs/custom_glossary.json`) apply to both interfaces.
+
+### Run log
+
+`outputs/run.log` records every translation result and every rejection reason for a single run, with no line limit. Files that are genuinely broken are named there together with the parse error instead of being skipped in silence. The log is cleared each time the app starts, so it always describes the most recent run only. Attach this file when reporting an issue.
 
 ---
 
@@ -304,7 +302,12 @@ uv run python scripts/translate_modpack.py --modpack "C:/CurseForge/Instances/AT
 uv run python scripts/translate_modpack.py --modpack "C:/CurseForge/Instances/ATM10" --skip-mods --retry 2
 ```
 
-The CLI shares the same run log as the GUI: every run clears and rewrites `outputs/run.log`.
+The CLI runs the same pipeline as the GUI:
+
+- The official glossary and `outputs/custom_glossary.json` are applied exactly the same way.
+- Output validation is identical — placeholders, format-argument count, structural markup, line breaks, dropped clauses. Rejected strings are retried up to `--retry N` times, then fall back to English and are collected in `Failed Items/`.
+- The run log is shared: every run clears and rewrites `outputs/run.log`.
+- Manual correction is GUI-only. The CLI neither shows the correction dialog nor reads `outputs/manual_translations.json`, so run the GUI once if you want to fix the failed items.
 
 ---
 
@@ -315,8 +318,8 @@ The CLI shares the same run log as the GUI: every run clears and rewrites `outpu
 | `json_lang` | `.json` | Standard mod language file (`assets/<mod>/lang/en_us.json`); resource pack overrides use the same format |
 | `legacy_lang` | `.lang` | Pre-1.13 mod language file (`en_us.lang`); shader pack `shaders/lang/` uses the same format |
 | `patchouli_json` | `.json` | Patchouli guidebook pages |
-| `guideme_md` | `.md` | GuideME in-game guide pages (AE2, Powah, etc.) |
-| `citadel_txt` | `.txt` | Citadel guidebook pages (Alex's Mobs, Alex's Caves, etc.) |
+| `guideme_md` | `.md` | GuideME in-game guide pages (AE2 — press G in game — Powah, etc.). JSX component tags and links are preserved verbatim |
+| `citadel_txt` | `.txt` | Citadel guidebook pages (Alex's Mobs, Alex's Caves, etc.). Chinese has no spaces for the renderer to break on, so the output is wrapped following the convention of each mod's own official translation, keeping text inside the page |
 | `ftbq_snbt` | `.snbt` | FTB Quests language files |
 | `ftbq_inline_snbt` | `.snbt` | FTB Quests direct text fields in quest files |
 | `heracles_snbt` | `.snbt` | Heracles (Odyssey Quests) language files |
@@ -332,8 +335,13 @@ The CLI shares the same run log as the GUI: every run clears and rewrites `outpu
 | `mods/*.jar` | Translations injected back into the JAR; originals backed up to `mods_bak/` |
 | `config/`, `kubejs/` | Written in place; originals backed up to `quests_bak/` |
 | `datapacks/`, `config/openloader/`, `global_packs/` | Power definitions in folder-based data packs are written in place; originals backed up to `data_bak/`. ZIP data packs are not handled |
-| `resourcepacks/` | ZIP packs are injected back into the ZIP, folder packs are written in place; originals backed up to `resourcepacks_bak/` |
+| `resourcepacks/` | ZIP packs are injected back into the ZIP, folder packs are written in place; originals backed up to `resourcepacks_bak/`. These packs add or override GUI text with keys that exist in no mod JAR, so without scanning them those strings stay English forever |
 | `shaderpacks/` | `shaders/lang/` of folder-based packs is written in place; originals backed up to `shaderpacks_bak/`. ZIP shader packs are not handled |
+
+Two things that used to produce broken output are handled while rewriting:
+
+- A few mod JARs contain duplicate entries for the same path. Rewrites de-duplicate them (last entry wins) instead of producing a JAR the game cannot read.
+- Trailing commas are accepted in JSON everywhere — the game's GSON reader tolerates them, Python's `json` does not. Files that are genuinely broken get a line in `outputs/run.log` naming the file and the parse error.
 
 ---
 
@@ -362,9 +370,11 @@ The CLI shares the same run log as the GUI: every run clears and rewrites `outpu
 │   ├── manual_translations.json   ← manual corrections, applied first on later runs
 │   ├── custom_glossary.json       ← custom terms (written by the GUI's "自訂用語…")
 │   └── run.log                    ← full log of this run, cleared when the app starts
-└── Failed Items/
-    ├── modname__json_lang.txt   ← strings that failed after all retries
-    └── ...
+└── Failed Items/                  ← strings that failed after all retries; rewritten every run
+    ├── natural_text/              ← ordinary sentences — the ones worth correcting by hand
+    ├── markup_or_book_text/       ← guidebook pages and markup-heavy strings
+    ├── short_fragments/           ← very short strings and bare format arguments
+    └── copy_or_skip_noise/        ← identifiers and strings that need no translation
 ```
 
 Nothing under `outputs/` is ever overwritten by auto-update.
@@ -376,12 +386,12 @@ Nothing under `outputs/` is ever overwritten by auto-update.
 **Q: How do ZIP users update the app?**
 - Open the app. If a newer GitHub Release exists, click **Auto update** in the update dialog.
 - The updater preserves user outputs and backups, but rebuilds `.venv` and the local backend setup to avoid dependency conflicts.
-- Release ZIPs are generated by GitHub Actions from tags such as `v1.5.3`.
+- Release ZIPs are generated by GitHub Actions from tags such as `v1.5.4`, and only from tags on this repository's `main` branch.
 
 **Q: Windows Defender flags the launcher as malware and blocks it.**
 - This is a false positive. The launcher is a small, unsigned executable, and antivirus machine-learning models sometimes flag such files (v1.4.1 was misidentified as `Trojan:Win32/Suschil!rfn`).
 - v1.5.0 addresses the causes: the launcher no longer starts the app through `cmd.exe`, and it carries full version and publisher metadata.
-- If it is still blocked: verify the download against the SHA-256 published on the Release page, then go to Windows Security → Virus & threat protection → Protection history and choose "Allow". Reporting the file to [Microsoft](https://www.microsoft.com/en-us/wdsi/filesubmission) helps get the false positive corrected.
+- If it is still blocked: verify the download against the `.zip.sha256` file attached to the Release page, then go to Windows Security → Virus & threat protection → Protection history and choose "Allow". Reporting the file to [Microsoft](https://www.microsoft.com/en-us/wdsi/filesubmission) helps get the false positive corrected.
 - You can skip the launcher entirely and run `uv run python main.py` instead — the result is identical.
 
 **Q: Startup fails with `OSError: [WinError -1073741795] Windows Error 0xc000001d`.**
@@ -421,10 +431,16 @@ Nothing under `outputs/` is ever overwritten by auto-update.
 - AMD acceleration uses AMD's prebuilt `llama.cpp` binaries on supported Windows/Linux systems.
 
 **Q: Some strings fall back to English.**
-- This happens when the model output fails validation: a missing placeholder (e.g., `{0}` dropped from the translation), a higher format-argument count than the source (an extra `%s` makes the game throw when it reads that string), missing structural markup, collapsed line breaks, or no Chinese at all in the output.
+- This happens when the model output fails validation:
+  - a missing placeholder (e.g. `{0}` dropped from the translation);
+  - a higher format-argument count than the source — an extra `%s` makes the game throw when it reads that string, so this is rejected even for translations the mod shipped itself;
+  - missing structural markup, or collapsed line breaks;
+  - a dropped clause: output drastically shorter than a multi-clause source is rejected instead of passing every structural check. Measured against 144,580 shipped en→zh pairs, the false-positive rate is 0.022%;
+  - no Chinese at all in the output.
+- Line breaks the model adds on its own are removed rather than rejected when the source is a single line; cached entries are repaired in place on reuse.
 - Increase the retry count in the GUI or with `--retry N` on the CLI.
 - Every rejection reason is written to `outputs/run.log`; failed items are additionally collected in `Failed Items/`.
-- The GUI lists failed items after translation so you can fill them in by hand, writing the results straight back into the modpack.
+- The GUI lists failed items after translation so you can fill them in by hand, or export them for an online model and import the result back.
 
 **Q: Where is the translated output?**
 - **Mod JARs**: Translations are injected directly into the mod `.jar` files. Original JARs are backed up to `mods_bak/`.

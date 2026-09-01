@@ -1,7 +1,8 @@
-# Minecraft模組包翻譯器 v1.5.3
+# Minecraft模組包翻譯器 v1.5.4
 
 **Language / 語言：** [English](README.md) | 繁體中文
 
+[![下載次數](https://img.shields.io/github/downloads/Koudesuk/Modpack_Translator/total?label=%E4%B8%8B%E8%BC%89%E6%AC%A1%E6%95%B8&color=brightgreen)](https://github.com/Koudesuk/Modpack_Translator/releases)
 [![Ko-fi](https://img.shields.io/badge/贊助我-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/koudesuk)
 
 ---
@@ -10,42 +11,13 @@
 
 ---
 
-## v1.5.3 更新內容
-
-| 修正 | 說明 |
-|---|---|
-| **Windows 失敗項目輸出** | 失敗項目報告改用短且不重複的檔名。即使程式或模組包放在很深的資料夾中也能正常輸出，完整來源位置仍會保留在報告內容裡 |
-| **更安全的發佈流程** | 發佈前會檢查依賴鎖定檔，並測試實際指定的版本標籤 |
-
----
-
-## v1.5.2 更新內容
-
-| 修正 | 說明 |
-|---|---|
-| **Origins／Apoli 能力** | 新增掃描 `data/<ns>/powers` 與 `data/<ns>/origins`。Origins 允許 `name`、`description` 直接寫字面文字而不走 lang 鍵，這些字串在舊版是完全看不見的——能力面板整片英文，失敗清單裡卻什麼都查不到。條件、動作、修飾符子樹一律不碰：那裡的 `name` 是傷害類型之類的 ID，翻了能力會失效而且不會報錯 |
-| **單字不再被靜默丟掉** | 舊規則把「不含空白」當成「識別字」，於是 `Bookshelves`、`Carrots`、`Cooking` 這類任務標題被直接丟掉——玩家在任務書裡看得到，失敗清單裡卻沒有。識別字判定改為必須有分隔符，其餘交給 lang 檔在用的同一套判定 |
-| **壞檔會留下紀錄** | 尾逗號現在一律容忍（遊戲的 GSON 讀得動，Python 的 `json` 不收）。真正寫壞的檔案會在 `outputs/run.log` 留一行，標明檔案與解析錯誤位置，不再無聲跳過 |
-| **不再憑空多出換行** | 原文是單行時，模型自己加的換行一律移除。命中舊快取時也就地修正 |
-| **漏譯偵測** | 整個子句被吃掉的譯文，過去所有結構性檢查都攔不到。現在多子句原文若譯出的內容量明顯不足，會退回原文並列入手動補譯。以 144,580 條模組出貨的既有中英對照實測，誤判率 0.022% |
-| **用語庫比對不分大小寫** | 用語提示原本是大小寫敏感的，原文寫 `saturation value` 就永遠命中不到 `Saturation` 詞條，模型只能自己猜。prompt 注入改為不分大小寫（事後替換維持大小寫敏感，以免動壞程式識別字） |
-
----
-
-## v1.5.0 更新內容
+## v1.5.4 更新內容
 
 | 項目 | 說明 |
 |---|---|
-| **用語庫** | 內建 1,945 條 Minecraft 官方繁中譯名。原文整串命中詞條時直接取用、不經模型；翻長句時把相關詞條附進 prompt；模型仍留英文原詞則事後強制替換。GUI 的「自訂用語…」可新增或覆蓋詞條 |
-| **GuideME 指南** | AE2（遊戲內按 G）、Powah 等模組的指南頁（`.md`）現在會翻譯，JSX 元件標籤與連結原樣保留 |
-| **Citadel 圖鑑書** | Alex's Mobs／Alex's Caves 的圖鑑內文（`.txt`）現在會翻譯。中文沒有空格無法自動斷行，程式會依模組官方譯本的慣例自行折行，避免文字衝出書頁 |
-| **資源包／光影包** | 掃描範圍新增 `resourcepacks/` 與 `shaderpacks/`。這些包會覆蓋或新增 GUI 文字，那些鍵在模組 jar 裡並不存在，不掃就永遠是英文 |
-| **失敗項目手動補譯** | 翻譯完成後會列出自動翻不好的字串，可逐條手動補上並直接寫回模組包。補過的譯文會被記住，下次翻譯不會被蓋掉；沒關程式的話也可以用「失敗項目…」按鈕重開 |
-| **執行紀錄** | `outputs/run.log` 完整記錄單次執行的每一條翻譯結果與每一次拒絕原因，不設行數上限。回報問題時請附上這個檔案 |
-| **佔位符引數驗證** | 譯文若比原文多用了一個 `%s`，遊戲讀到該字串會直接丟例外。現在會擋下並重譯，連模組原本就帶錯的既有譯文也一併重寫 |
-| **jar 重複條目去重** | 少數模組 jar 內含同名重複檔案，改寫時會以最後一筆為準去重，不再產出壞掉的 jar |
-| **CPU 後端更換** | 改用 llama.cpp 官方預編譯 binary，修正部分 CPU 啟動時的 `0xc000001d` 崩潰 |
-| **防毒誤判修正** | launcher 不再透過 `cmd.exe` 啟動程式，並補上完整的版本與發行者中繼資料 |
+| **失敗項目批次翻譯** | 失敗項目視窗可以把整份清單匯出成 JSON，翻好再讀回來。線上大模型必須遵守的規則（保留佔位符、保留行數、沿用官方譯名、不該翻的留空）已經寫在檔案裡，GPT、Claude、Grok、Gemini 都只要填每一筆的 `zh_tw` 欄位就好。幾百條失敗項目不再只能一條一條打字 |
+| **匯入的譯文要驗過才算數** | 匯入只把譯文填進表格，沒按「套用」之前模組包一個位元組都不會動。匯入的列會標底色；沒通過程式自己那套檢查的（佔位符掉了、換行被壓成一行、格式引數變多）另外標警示色，滑鼠移過去看得到原因，也可以勾「只顯示需確認的項目」單獨檢視。線上模型最愛把多行併成一行，那種東西套下去任務書與設定面板整個爆版 |
+| **匯入比對容錯** | 條目依 `id` → 來源＋鍵 → 鍵 → 英文原文由嚴到寬對回列號，順序被打亂或只翻了一部分也對得回去；裸陣列、模型偷懶回的 `{鍵: 譯文}` 對照表同樣收。完全對不上的條目會回報，不會無聲吃掉 |
 
 ---
 
@@ -143,7 +115,7 @@ cuDNN **不需要**安裝。
 setup_windows.bat
 ```
 
-初始化完成後，Windows 會在專案資料夾建立版本化 launcher，例如 `模組包翻譯器v1.5.3.exe`。之後直接雙擊它即可啟動程式，不需要開終端機手動輸入命令。若 launcher 遺失，請重新執行 setup，或手動建立：
+初始化完成後，Windows 會在專案資料夾建立版本化 launcher，例如 `模組包翻譯器v1.5.4.exe`。之後直接雙擊它即可啟動程式，不需要開終端機手動輸入命令。若 launcher 遺失，請重新執行 setup，或手動建立：
 
 ```bat
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_windows_launcher.ps1
@@ -239,7 +211,7 @@ paths:
 uv run python main.py
 ```
 
-Windows 使用者也可以直接雙擊版本化 launcher，例如 `模組包翻譯器v1.5.3.exe`；它會先檢查是否已完成 setup，再在背景執行 `uv run python main.py`，launcher 錯誤會寫到 `.runtime/launcher.log`。
+Windows 使用者也可以直接雙擊版本化 launcher，例如 `模組包翻譯器v1.5.4.exe`；它會先檢查是否已完成 setup，再在背景執行 `uv run python main.py`，launcher 錯誤會寫到 `.runtime/launcher.log`。
 
 啟動時，程式會在背景檢查最新 GitHub Release。有新版 release package 時才顯示更新視窗；沒有更新時不顯示任何訊息。自動更新會下載 release ZIP，若有 SHA256 檔會先驗證，接著套用新版原始碼、移除舊 `.venv` 與過期的本機後端 runtime 檔案、重新執行 setup，完成後再啟動新版程式。
 
@@ -256,9 +228,33 @@ Windows 使用者也可以直接雙擊版本化 launcher，例如 `模組包翻�
 
 | 按鈕 | 用途 |
 |---|---|
-| **自訂用語…** | 指定英文詞的固定譯法，優先序高於內建的官方用語，可用來覆蓋官方譯名。譯名留空代表停用該詞條。存於 `outputs/custom_glossary.json`，自動更新不會清掉 |
-| **失敗項目…** | 重開手動補譯視窗。翻譯完成後若有失敗項目會自動跳出一次；只要沒關程式、也沒換模組包資料夾，就能用這個按鈕再開 |
-| **執行紀錄** | 開啟 `outputs/run.log`。回報問題時請附上這個檔案 |
+| **自訂用語…** | 指定英文詞的固定譯法，詳見[用語庫與自訂用語](#用語庫與自訂用語) |
+| **失敗項目…** | 重開手動補譯視窗，詳見[失敗項目與手動補譯](#失敗項目與手動補譯) |
+| **執行紀錄** | 開啟 `outputs/run.log`，詳見[執行紀錄](#執行紀錄) |
+
+### 用語庫與自訂用語
+
+程式內建 **1,945 條 Minecraft 官方繁中譯名**，同時餵給三個環節，譯名才會前後一致：
+
+- 原文整串就是某個詞條時直接取官方譯名，不經模型。這是本地模型最大的一筆省時，也保證原版名稱百分之百正確。
+- 翻長句時把命中的詞條附進 prompt，讓模型沿用官方用語。
+- 模型仍留英文原詞的，事後強制替換。
+
+prompt 注入的比對不分大小寫，所以原文寫 `saturation value` 也命中得到 `Saturation` 詞條；事後替換維持大小寫敏感，以免動壞程式識別字。
+
+「自訂用語…」用來指定自己要的譯法，優先序為 **自訂 > 模組名 > 官方用語**，可以直接覆蓋官方譯名；譯名留空代表停用該詞條，讓模型自由翻譯。設定存在 `outputs/custom_glossary.json`，自動更新不會清掉，CLI 也一樣會套用。
+
+### 失敗項目與手動補譯
+
+重試後仍無法翻譯的字串會寫入 `Failed Items/`，並依「難在哪裡」分成 `natural_text`、`markup_or_book_text`、`short_fragments`、`copy_or_skip_noise` 四類。報告檔名短且不重複，程式或模組包放在很深的資料夾裡也能正常輸出，完整來源位置寫在報告內容裡。若無失敗項目，此資料夾不會被建立。
+
+翻譯結束時若有失敗項目，程式會列出所有字串讓您逐條手動補譯，按「套用」即直接寫回模組包；補上的譯文存於 `outputs/manual_translations.json`，下次翻譯會優先沿用、不會被模型蓋掉。只要沒關程式、也沒換模組包資料夾，就能用「失敗項目…」按鈕再開。
+
+條目太多時別硬打，用視窗右上角的匯出／匯入：
+
+1. **匯出失敗項目** 把整份清單存成 JSON（預設資料夾 `Failed Items/`）。檔案裡附了模型必須遵守的規則：`id`、`source`、`key`、`en_us` 原樣保留；`%s`、`%1$s`、`{0}`、`\n`、`§a`、`$(...)`、`[文字](連結)`、`<tag>` 這類佔位符與控制碼照原樣保留；原文幾行、譯文就幾行；專有名詞沿用 Minecraft 官方繁中譯名；不該翻的把 `zh_tw` 留空。
+2. 把整個檔案交給任一線上大模型（GPT、Claude、Grok、Gemini 等），請它只填 `zh_tw` 欄位。
+3. **匯入翻譯完成之失敗項目** 把結果讀回表格。此時模組包還沒被動到——檢查過（必要時直接在表格裡改）之後，按「套用」才會寫回去。
 
 **原始檔案備份位置：**
 - 模組 JAR → `mods_bak/`
@@ -267,9 +263,11 @@ Windows 使用者也可以直接雙擊版本化 launcher，例如 `模組包翻�
 - 光影包 → `shaderpacks_bak/`
 - 就地改寫的資料包檔案 → `data_bak/`
 
-**失敗項目**（重試後仍無法翻譯的字串）會寫入 `Failed Items/<模組名稱>.txt`，供使用者檢查。若無失敗項目，此資料夾不會被建立。翻譯結束時若有失敗項目，程式會列出所有字串讓您逐條手動補譯，按「套用」即直接寫回模組包；補上的譯文存於 `outputs/manual_translations.json`，下次翻譯會優先沿用、不會被模型蓋掉。
-
 > 手動補譯是 GUI 專屬功能；CLI 不會讀取 `outputs/manual_translations.json`。自訂用語（`outputs/custom_glossary.json`）則兩種介面都會套用。
+
+### 執行紀錄
+
+`outputs/run.log` 完整記錄單次執行的每一條翻譯結果與每一次拒絕原因，不設行數上限。真正寫壞、讀不進來的檔案也會在這裡留一行，標明檔案與解析錯誤位置，不會無聲跳過。每次開啟程式時清空，所以裡面永遠只有最近一次執行的內容。回報問題時請附上這個檔案。
 
 ---
 
@@ -306,7 +304,12 @@ uv run python scripts/translate_modpack.py --modpack "C:/CurseForge/Instances/AT
 uv run python scripts/translate_modpack.py --modpack "C:/CurseForge/Instances/ATM10" --skip-mods --retry 2
 ```
 
-CLI 與 GUI 共用同一份執行紀錄：每次執行會清空並重寫 `outputs/run.log`。
+CLI 跑的是與 GUI 完全相同的流程：
+
+- 官方用語庫與 `outputs/custom_glossary.json` 的套用方式一模一樣。
+- 輸出驗證也一樣：佔位符、格式引數數量、結構標記、換行、漏譯子句。被拒絕的字串最多重試 `--retry N` 次，仍失敗就回退原文並收進 `Failed Items/`。
+- 執行紀錄共用：每次執行會清空並重寫 `outputs/run.log`。
+- 手動補譯是 GUI 專屬：CLI 不會跳出補譯視窗，也不會讀 `outputs/manual_translations.json`。要補譯請開 GUI 跑一次（翻好的會走快取，很快）。
 
 ---
 
@@ -317,8 +320,8 @@ CLI 與 GUI 共用同一份執行紀錄：每次執行會清空並重寫 `output
 | `json_lang` | `.json` | 標準模組語言檔（`assets/<mod>/lang/en_us.json`），資源包內的覆蓋檔同格式 |
 | `legacy_lang` | `.lang` | 1.13 以前的舊式語言檔（`en_us.lang`），光影包的 `shaders/lang/` 同格式 |
 | `patchouli_json` | `.json` | Patchouli 導覽書頁面 |
-| `guideme_md` | `.md` | GuideME 遊戲內指南頁面（AE2、Powah 等） |
-| `citadel_txt` | `.txt` | Citadel 圖鑑書頁面（Alex's Mobs、Alex's Caves 等） |
+| `guideme_md` | `.md` | GuideME 遊戲內指南頁面（AE2 遊戲內按 G、Powah 等），JSX 元件標籤與連結原樣保留 |
+| `citadel_txt` | `.txt` | Citadel 圖鑑書頁面（Alex's Mobs、Alex's Caves 等）。中文沒有空格無法自動斷行，程式會依模組官方譯本的慣例自行折行，避免文字衝出書頁 |
 | `ftbq_snbt` | `.snbt` | FTB Quests 語言檔 |
 | `ftbq_inline_snbt` | `.snbt` | FTB Quests 任務檔中的直接文字欄位 |
 | `heracles_snbt` | `.snbt` | Heracles（Odyssey Quests）語言檔 |
@@ -334,8 +337,13 @@ CLI 與 GUI 共用同一份執行紀錄：每次執行會清空並重寫 `output
 | `mods/*.jar` | 譯文注入回 jar，原檔備份至 `mods_bak/` |
 | `config/`、`kubejs/` | 就地寫入，原檔備份至 `quests_bak/` |
 | `datapacks/`、`config/openloader/`、`global_packs/` | 資料夾型資料包的能力定義就地寫入，原檔備份至 `data_bak/`。zip 型資料包不處理 |
-| `resourcepacks/` | zip 包注入回 zip、資料夾包就地寫入，原檔備份至 `resourcepacks_bak/` |
+| `resourcepacks/` | zip 包注入回 zip、資料夾包就地寫入，原檔備份至 `resourcepacks_bak/`。這些包會覆蓋或新增 GUI 文字，那些鍵在模組 jar 裡並不存在，不掃就永遠是英文 |
 | `shaderpacks/` | 就地寫入資料夾型光影包的 `shaders/lang/`，原檔備份至 `shaderpacks_bak/`。zip 光影包目前不處理 |
+
+改寫時另外處理兩件以前會產出壞檔的事：
+
+- 少數模組 jar 內含同名重複檔案，改寫時以最後一筆為準去重，不再產出遊戲讀不動的 jar。
+- JSON 的尾逗號一律容忍（遊戲的 GSON 讀得動，Python 的 `json` 不收）。真正寫壞的檔案會在 `outputs/run.log` 留一行，標明檔案與解析錯誤位置。
 
 ---
 
@@ -364,9 +372,11 @@ CLI 與 GUI 共用同一份執行紀錄：每次執行會清空並重寫 `output
 │   ├── manual_translations.json   ← 手動補譯的譯文，下次翻譯優先沿用
 │   ├── custom_glossary.json       ← 自訂用語（由 GUI「自訂用語…」寫入）
 │   └── run.log                    ← 本次執行的完整紀錄，開啟程式時清空
-└── Failed Items/
-    ├── modname__json_lang.txt   ← 重試後仍失敗的字串
-    └── ...
+└── Failed Items/                  ← 重試後仍失敗的字串，每次翻譯重寫
+    ├── natural_text/              ← 一般句子，最值得手動補譯的一類
+    ├── markup_or_book_text/       ← 指南書頁面與標記密集的字串
+    ├── short_fragments/           ← 極短字串與只有格式引數的內容
+    └── copy_or_skip_noise/        ← 識別字與本來就不必翻譯的字串
 ```
 
 `outputs/` 底下的檔案都不會被自動更新覆蓋。
@@ -378,12 +388,12 @@ CLI 與 GUI 共用同一份執行紀錄：每次執行會清空並重寫 `output
 **Q：ZIP 使用者要怎麼更新？**
 - 開啟程式即可。如果 GitHub Release 有新版，更新視窗會出現，按 **自動更新**。
 - updater 會保留使用者輸出與備份，但會重建 `.venv` 和本機後端設定，避免依賴衝突。
-- Release ZIP 由 GitHub Actions 根據 `v1.5.3` 這類 tag 自動產生。
+- Release ZIP 由 GitHub Actions 根據 `v1.5.4` 這類 tag 自動產生，且只接受本倉庫 `main` 分支上的 tag。
 
 **Q：Windows Defender 說 launcher 是病毒，擋著不讓執行。**
 - 這是誤判。launcher 是一支未經數位簽章的小型執行檔，防毒軟體的機器學習模型有時會把這類檔案標記為威脅（v1.4.1 曾被誤判為 `Trojan:Win32/Suschil!rfn`）。
 - v1.5.0 已針對誤判成因調整：launcher 不再透過 `cmd.exe` 啟動程式，並加上完整的版本與發行者中繼資料。
-- 若仍被攔截：先用 Release 頁面提供的 SHA-256 確認檔案沒被竄改，再到 Windows 安全性 → 病毒與威脅防護 → 保護歷程記錄選擇「允許」。也歡迎回報給 [Microsoft](https://www.microsoft.com/en-us/wdsi/filesubmission) 以便修正誤判。
+- 若仍被攔截：先用 Release 頁面附的 `.zip.sha256` 確認檔案沒被竄改，再到 Windows 安全性 → 病毒與威脅防護 → 保護歷程記錄選擇「允許」。也歡迎回報給 [Microsoft](https://www.microsoft.com/en-us/wdsi/filesubmission) 以便修正誤判。
 - 不想用 launcher 的話，直接執行 `uv run python main.py` 效果完全相同。
 
 **Q：啟動時出現 `OSError: [WinError -1073741795] Windows Error 0xc000001d`。**
@@ -423,10 +433,16 @@ CLI 與 GUI 共用同一份執行紀錄：每次執行會清空並重寫 `output
 - AMD 加速使用 AMD 官方預編譯的 `llama.cpp` binary，支援範圍以 Windows/Linux 為主。
 
 **Q：部分字串回退為英文。**
-- 這發生在模型輸出未通過驗證時：佔位符遺失（例如翻譯後少了 `{0}`）、格式引數變多（譯文多用了一個 `%s`，遊戲讀到會直接丟例外）、結構標記遺失、換行被壓縮，或譯文裡根本沒有中文。
+- 這發生在模型輸出未通過驗證時：
+  - 佔位符遺失（例如翻譯後少了 `{0}`）；
+  - 格式引數變多（譯文多用了一個 `%s`，遊戲讀到會直接丟例外），模組原本就帶錯的既有譯文一樣會被擋下重寫；
+  - 結構標記遺失，或換行被壓縮；
+  - 漏譯：多子句原文若譯出的內容量明顯不足，會被判定整個子句被吃掉而退回原文。以 144,580 條模組出貨的既有中英對照實測，誤判率 0.022%；
+  - 譯文裡根本沒有中文。
+- 原文是單行時，模型自己加的換行會直接移除而不是判失敗；命中舊快取時也就地修正。
 - 在 GUI 中增加重試次數，或在 CLI 使用 `--retry N` 參數。
 - 每一次拒絕的原因都寫在 `outputs/run.log`，失敗項目另外整理於 `Failed Items/`。
-- GUI 會在翻譯結束後把失敗項目列出來讓您手動補譯，補完直接寫回模組包。
+- GUI 會在翻譯結束後把失敗項目列出來讓您手動補譯，也可以匯出給線上大模型翻好再匯入。
 
 **Q：翻譯結果輸出在哪裡？**
 - **模組 JAR**：翻譯結果直接注入模組 `.jar` 檔案，原始 JAR 備份至 `mods_bak/`。
