@@ -1,4 +1,4 @@
-# Minecraft Modpack Translator v1.5.4
+# Minecraft Modpack Translator v1.5.5
 
 **Language / 語言：** English | [繁體中文](README_zh.md)
 
@@ -11,13 +11,12 @@ A tool that automatically translates Minecraft modpacks from English (`en_us`) t
 
 ---
 
-## What's New in v1.5.4
+## What's New in v1.5.5
 
 | Feature | Description |
 |---|---|
-| **Batch translation of failed items** | The failed-items dialog can now export the whole list to a JSON file and read the result back. The rules an online model has to follow (keep placeholders, keep the line count, use official Minecraft terminology, leave untranslatable entries empty) are written into the file itself, so any online model — GPT, Claude, Grok, Gemini — only has to fill in the `zh_tw` field of each entry. Typing a few hundred corrections by hand is no longer the only option |
-| **Imported translations are checked, not trusted** | An import only fills the table; nothing reaches the modpack until you press "套用". Imported rows are tinted, and rows that fail the same validation the translator itself uses — dropped placeholders, collapsed line breaks, extra format arguments — get a warning colour, carry the reason in a tooltip, and can be isolated with "只顯示需確認的項目". Online models like to merge a multi-line string into one line, and that breaks the layout of quest and config panels |
-| **Forgiving import matching** | Entries are matched back by `id`, then source + key, then key, then the English text, so a reordered or partially returned file still lands on the right rows. A bare array or a plain `{key: translation}` map is accepted too. Anything that matches nothing is reported instead of being silently dropped |
+| **Share one translation with friends** | New "匯出翻譯…" (Export) and "匯入翻譯…" (Import) buttons below the modpack folder. When a group plays the same modpack, only the person with the best PC has to translate: export a single zip translation pack and send it; everyone else selects their own modpack folder and imports it. Importing never starts the model and needs no GPU, and nobody has to dig translated files out of jars and quest folders by hand. Setup still downloads the base model on first install; if you only import, you can delete the model afterwards |
+| **Packs carry translations, not files** | A pack stores the translation memory (cache plus manual corrections, keyed by source text) instead of copies of translated jars and quest files. The importer rescans its own modpack and writes every string through the same writers a normal run uses, so no file type can be forgotten, jar file names don't have to match, and quest files are never overwritten with someone else's version. Text that is already Chinese is left alone, originals are backed up first, and strings the pack doesn't cover stay English and appear under "失敗項目…" |
 
 ---
 
@@ -108,12 +107,14 @@ cuDNN is **not** required.
 
 The setup script installs uv-managed CPython 3.12, creates `.venv/`, detects your hardware, installs the matching local inference backend, downloads the base model, and writes `.runtime/backend.json`. Users do not need to install Python separately.
 
+> **Only importing a friend's translation pack?** Installation is exactly the same, and the first setup run still downloads the ~5 GB base model. Importing never uses it, so you can delete it once setup has finished without affecting imports — see [Sharing translations](#sharing-translations).
+
 **Windows:**
 ```bat
 setup_windows.bat
 ```
 
-After setup, Windows builds a versioned launcher such as `模組包翻譯器v1.5.4.exe` in the project folder. Double-click it to start the app without opening a terminal. If the launcher is missing, run setup again or build it manually:
+After setup, Windows builds a versioned launcher such as `模組包翻譯器v1.5.5.exe` in the project folder. Double-click it to start the app without opening a terminal. If the launcher is missing, run setup again or build it manually:
 
 ```bat
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_windows_launcher.ps1
@@ -209,7 +210,7 @@ Launch the graphical interface:
 uv run python main.py
 ```
 
-On Windows, users can also double-click the versioned launcher EXE, such as `模組包翻譯器v1.5.4.exe`. It checks that setup has been run, launches `uv run python main.py` in the background, and writes launcher errors to `.runtime/launcher.log`.
+On Windows, users can also double-click the versioned launcher EXE, such as `模組包翻譯器v1.5.5.exe`. It checks that setup has been run, launches `uv run python main.py` in the background, and writes launcher errors to `.runtime/launcher.log`.
 
 On startup, the app checks the latest GitHub Release in the background. If a newer release package is available, it shows an update dialog; if there is no update, it shows nothing. Auto-update downloads the release ZIP, verifies its SHA256 file when present, applies the new source files, removes the old `.venv` and stale local backend runtime files, runs setup again, and then restarts the app.
 
@@ -228,6 +229,7 @@ On startup, the app checks the latest GitHub Release in the background. If a new
 |---|---|
 | **自訂用語…** (Custom terms) | Pin a fixed translation for an English term — see [Glossary and custom terms](#glossary-and-custom-terms) |
 | **失敗項目…** (Failed items) | Reopen the manual correction dialog — see [Failed items and manual correction](#failed-items-and-manual-correction) |
+| **匯出翻譯…** / **匯入翻譯…** (Export / Import) | Pack your translations for friends, or apply a pack a friend sent you — see [Sharing translations](#sharing-translations) |
 | **執行紀錄** (Run log) | Open `outputs/run.log` — see [Run log](#run-log) |
 
 ### Glossary and custom terms
@@ -262,6 +264,28 @@ For long lists, use the export/import buttons at the top right of the dialog ins
 - Data pack files edited in place → `data_bak/`
 
 > Manual correction is GUI-only; the CLI does not read `outputs/manual_translations.json`. Custom glossary terms (`outputs/custom_glossary.json`) apply to both interfaces.
+
+### Sharing translations
+
+When a group of friends plays the same modpack, not everyone has to run the translation:
+
+1. **The translator** — Translate as usual, then click "匯出翻譯…" to save a single zip translation pack (the Desktop is suggested) and send it to your friends.
+2. **Everyone else** — Select your own modpack folder, click "匯入翻譯…", and pick that zip (no need to unzip it). The app shows where the pack came from and how many entries it holds; after you confirm, it scans your modpack and writes the translations in.
+
+> **About the base model (~5 GB)**: the first setup run still downloads the base model automatically; that step can't be skipped. If you only import packs from friends and never translate yourself, you can delete the whole model folder once setup has finished — imports keep working:
+>
+> - Windows: `%USERPROFILE%\.cache\huggingface\hub\models--unsloth--gemma-4-E4B-it-GGUF` (paste it straight into the File Explorer address bar)
+> - macOS / Linux: `~/.cache/huggingface/hub/models--unsloth--gemma-4-E4B-it-GGUF`
+>
+> Auto-update re-runs setup, which downloads the model again; you can delete it again after the update. If you later want to translate yourself, run setup once more and it will download the model again.
+
+- Importing never starts the translation model and needs no GPU. A PC that has never run a translation can import directly.
+- A pack holds the translation memory (the contents of `outputs/translation_cache.json` and `outputs/manual_translations.json`), not translated files. The importer decides where every string goes from its own modpack, so no file type can be missed and jar file names don't have to match.
+- It works best when both sides run the same modpack version; a different version only means fewer matches, never broken files. Text that is already Chinese is not overwritten, and originals are backed up to the locations listed above.
+- The pack's entries are merged into your local cache — only filling gaps, never replacing existing entries — so your own later runs reuse them too.
+- Strings the pack doesn't cover stay English. After the import, use "失敗項目…" to fill them by hand, or rescan and click "▶ 開始翻譯" to finish them with your local model.
+- A pack contains the whole translation cache of that PC; if it has translated several modpacks, their entries come along too. This doesn't affect the result.
+- Import time is mostly spent rewriting jars; a large modpack of about 500 mods can take 15–20 minutes including the scan and backup — still far faster than translating again.
 
 ### Run log
 
@@ -386,7 +410,7 @@ Nothing under `outputs/` is ever overwritten by auto-update.
 **Q: How do ZIP users update the app?**
 - Open the app. If a newer GitHub Release exists, click **Auto update** in the update dialog.
 - The updater preserves user outputs and backups, but rebuilds `.venv` and the local backend setup to avoid dependency conflicts.
-- Release ZIPs are generated by GitHub Actions from tags such as `v1.5.4`, and only from tags on this repository's `main` branch.
+- Release ZIPs are generated by GitHub Actions from tags such as `v1.5.5`, and only from tags on this repository's `main` branch.
 
 **Q: Windows Defender flags the launcher as malware and blocks it.**
 - This is a false positive. The launcher is a small, unsigned executable, and antivirus machine-learning models sometimes flag such files (v1.4.1 was misidentified as `Trojan:Win32/Suschil!rfn`).

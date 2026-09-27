@@ -73,6 +73,18 @@ def cache_key(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:24]
 
 
+def load_cache(path: Path) -> dict[str, str]:
+    """翻譯快取：來源字串雜湊 -> 譯文。"""
+    path = Path(path)
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    return {}
+
+
+def save_cache(path: Path, cache: dict[str, str]) -> None:
+    Path(path).write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 MANUAL_TRANSLATIONS_NAME = "manual_translations.json"
 
 
@@ -147,6 +159,9 @@ def _translate_single(
     if not _HAS_LETTER_RE.search(re.sub(r"\{[0-9]+\}", "", encoded)):
         return decode(encoded, tokens), True
 
+    if getattr(translator, "offline", False):
+        return encoded, False          # 匯入翻譯包時沒有模型可問
+
     for _ in range(1 + retry_count):
         if cancel_check is not None and cancel_check():
             return encoded, False
@@ -179,9 +194,12 @@ def _translate_validated(
     encoded, tokens = encode(source)
     final, ok = _translate_single(translator, encoded, tokens, retry_count, cancel_check)
     if not ok:
-        # 重試 retry_count 次後，後處理器仍判定模型輸出結構壞掉。
-        run_log.reject(source, final if final != encoded else None,
-                       f"模型輸出未通過後處理（已重試 {retry_count} 次）")
+        if getattr(translator, "offline", False):
+            reason = "匯入模式不啟動模型，翻譯包與快取裡都沒有這條"
+        else:
+            # 重試 retry_count 次後，後處理器仍判定模型輸出結構壞掉。
+            reason = f"模型輸出未通過後處理（已重試 {retry_count} 次）"
+        run_log.reject(source, final if final != encoded else None, reason)
         return source, False
     reason = rejection_reason(source, final)
     if reason is not None:

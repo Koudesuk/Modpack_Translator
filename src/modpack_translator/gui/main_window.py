@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSettings, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import Qt, QSettings, QStandardPaths, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFont, QIcon, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -42,6 +43,7 @@ from modpack_translator.pipeline.runner import (
     manual_translations_path,
     save_manual_translations,
 )
+from modpack_translator.pipeline.translation_pack import export_pack, merge_pack, read_pack
 from modpack_translator.gui.theme import apply_theme, restyle
 from modpack_translator.gui.worker import ScanWorker, TranslateWorker
 from modpack_translator.version import APP_NAME, APP_VERSION, __version__
@@ -82,8 +84,8 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(str(_APP_ICON_PATH)))
         self.setMinimumWidth(760)
         # 最小高度需容納完整版面（含 log 區的最小高度），否則底部輸出會被裁切
-        self.setMinimumHeight(820)
-        self.resize(900, 880)
+        self.setMinimumHeight(860)
+        self.resize(900, 920)
 
         self._scan_targets: list = []
         self._scan_fmt_counts: dict = {}
@@ -97,6 +99,9 @@ class MainWindow(QMainWindow):
         # 換了資料夾，這些 target 就指向別的檔案了，套用下去等於寫錯地方。
         self._translated_modpack_path: str = ""
         self._failed_items: list = []
+        # 目前這一輪是不是在套用匯入的翻譯包（不啟動模型）。翻譯鈕回到「▶ 開始翻譯」
+        # 時一律清掉——那個字樣代表的是用本機模型翻譯。
+        self._import_mode: bool = False
         self._translation_start_time: float = 0.0
         self._translation_total: int = 0
         self._current_progress: int = 0
@@ -204,6 +209,26 @@ class MainWindow(QMainWindow):
         modpack_row.addWidget(self.modpack_edit)
         modpack_row.addWidget(_browse_modpack_btn)
         mf.addRow("模組包資料夾：", modpack_row)
+
+        # 一群朋友只要一個人翻：翻好的匯出，其他人匯入就好。
+        share_row = QHBoxLayout()
+        self.export_btn = QPushButton("匯出翻譯…")
+        self.export_btn.clicked.connect(self._on_export_pack)
+        self.import_btn = QPushButton("匯入翻譯…")
+        self.import_btn.clicked.connect(self._on_import_pack)
+        share_help = _make_help_label(
+            "一群朋友玩同一個模組包時，只要電腦最好的那位翻譯一次就好。\n"
+            "匯出翻譯…：把這台電腦翻好的譯文存成一個 zip 翻譯包，傳給朋友。\n"
+            "匯入翻譯…：選好自己的模組包資料夾，再選朋友給的翻譯包，\n"
+            "程式會自動掃描並把譯文寫進模組包（原始檔案先備份）。\n"
+            "匯入不會啟動翻譯模型，也不需要顯示卡；\n"
+            "模組包裡已經是中文的內容不會被覆蓋，翻譯包裡沒有的字串保留英文。"
+        )
+        share_row.addWidget(self.export_btn)
+        share_row.addWidget(self.import_btn)
+        share_row.addWidget(share_help)
+        share_row.addStretch()
+        mf.addRow("翻譯分享：", share_row)
 
         root_layout.addWidget(modpack_group)
 
@@ -556,6 +581,9 @@ class MainWindow(QMainWindow):
 
     def _set_busy(self, busy: bool):
         self.scan_btn.setEnabled(not busy)
+        # 翻譯途中快取檔隨時在被改寫，匯出／匯入都可能讀到半份。
+        self.export_btn.setEnabled(not busy)
+        self.import_btn.setEnabled(not busy)
         if busy:
             self.failed_btn.setEnabled(False)
         else:
@@ -628,8 +656,14 @@ class MainWindow(QMainWindow):
     def _on_scan(self):
         if not self._validate_inputs():
             return
+        self._import_mode = False
+        self._start_scan()
 
+    def _start_scan(self):
         self._set_busy(True)
+        # 重新掃描就是新的一輪；留著上一輪的「✓ 完成」，使用者分不出按下去會做什麼。
+        self.translate_btn.setText("▶  開始翻譯")
+        self._set_tone(self.translate_btn, "")
         self.translate_btn.setEnabled(False)
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setFormat("")
@@ -664,6 +698,16 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(1)
         self.progress_bar.setVisible(False)
         self._set_busy(False)
+
+        if not targets and self._import_mode:
+            self._import_mode = False
+            self._show_log("掃描完成 — 模組包裡沒有需要套用翻譯包的檔案。")
+            QMessageBox.information(
+                self,
+                "不需要匯入",
+                "掃描完成：這個模組包已經沒有需要翻譯的內容，翻譯包不必套用。",
+            )
+            return
 
         if not targets:
             QMessageBox.warning(
@@ -707,6 +751,108 @@ class MainWindow(QMainWindow):
         self._show_log("\n".join(lines))
         self.translate_btn.setEnabled(True)
 
+        if self._import_mode:
+            self._start_translation()
+
+    # ------------------------------------------------------------------ 翻譯分享
+
+    def _on_export_pack(self):
+        """「匯出翻譯…」：把本機翻好的譯文打包成一個檔案，交給朋友匯入。"""
+        cfg = self._build_cfg()
+        if cfg is None:
+            return
+
+        modpack = self.modpack_edit.text().strip()
+        name = Path(modpack).name if modpack else ""
+        desktop = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DesktopLocation)
+        suggested = Path(desktop or Path.home()) / f"翻譯包_{name or '模組包'}_{datetime.now():%Y%m%d}.zip"
+        path, _ = QFileDialog.getSaveFileName(self, "匯出翻譯包", str(suggested), "翻譯包 (*.zip)")
+        if not path:
+            return
+        dest = Path(path)
+        if dest.suffix.lower() != ".zip":
+            dest = dest.with_name(dest.name + ".zip")
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            count = export_pack(
+                dest,
+                cfg.paths.translation_cache,
+                manual_translations_path(cfg.paths.output_root),
+                cfg.language.code,
+                name,
+            )
+        except (OSError, ValueError) as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "無法匯出翻譯包", str(exc))
+            return
+        QApplication.restoreOverrideCursor()
+
+        self._append_log(f"已匯出翻譯包（{count:,} 條譯文）：{dest}")
+        QMessageBox.information(
+            self,
+            "已匯出翻譯包",
+            f"已匯出 {count:,} 條譯文：\n{dest}\n\n"
+            "把這個檔案傳給朋友。對方在翻譯器選好自己的模組包資料夾後，"
+            "按「匯入翻譯…」選這個檔案即可——不需要解壓縮，也不用重跑翻譯。",
+        )
+
+    def _on_import_pack(self):
+        """「匯入翻譯…」：把別人的翻譯包併進本機快取，再掃描並直接套用，全程不啟動模型。"""
+        if not self._validate_inputs():
+            return
+        cfg = self._build_cfg()
+        if cfg is None:
+            return
+
+        downloads = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+        path, _ = QFileDialog.getOpenFileName(
+            self, "選擇要匯入的翻譯包", downloads or str(Path.home()), "翻譯包 (*.zip)"
+        )
+        if not path:
+            return
+        try:
+            pack = read_pack(Path(path), cfg.language.code)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "無法匯入翻譯包", str(exc))
+            return
+
+        modpack = Path(self.modpack_edit.text().strip())
+        answer = QMessageBox.question(
+            self,
+            "匯入翻譯包",
+            f"翻譯包來源：{pack.modpack or '（未註明）'}\n"
+            f"匯出時間：{pack.exported_at or '未知'}　翻譯器版本：v{pack.app_version or '?'}\n"
+            f"內含譯文：{pack.entries:,} 條\n\n"
+            f"接下來會掃描「{modpack.name}」，把對得上的譯文直接寫進模組包，不會啟動翻譯模型。\n"
+            "原始檔案會先備份（mods_bak/、quests_bak/ 等），模組包裡已經是中文的內容不會被覆蓋。\n\n"
+            "要開始匯入嗎？",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        manual_path = manual_translations_path(cfg.paths.output_root)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            added_cache, added_manual = merge_pack(pack, cfg.paths.translation_cache, manual_path)
+        except (OSError, ValueError) as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "無法匯入翻譯包", f"寫入本機快取失敗：\n{exc}")
+            return
+        QApplication.restoreOverrideCursor()
+
+        run_log.section("匯入翻譯包")
+        run_log.table([
+            ("翻譯包", path),
+            ("來源模組包", pack.modpack or "（未註明）"),
+            ("匯出時間", pack.exported_at or "未知"),
+            ("匯出版本", f"v{pack.app_version or '?'}"),
+            ("內含譯文", f"快取 {len(pack.cache):,}／手動補譯 {len(pack.manual):,}"),
+            ("併入本機", f"快取新增 {added_cache:,}／手動補譯新增 {added_manual:,}"),
+        ])
+        self._import_mode = True
+        self._start_scan()
+
     # ------------------------------------------------------------------ 翻譯
 
     def _on_translate_toggle(self):
@@ -728,10 +874,11 @@ class MainWindow(QMainWindow):
         if cfg is None:
             return
 
+        offline = self._import_mode
         lora_path = Path(cfg.model.lora_gguf_path)
         if not lora_path.is_absolute():
             lora_path = _PROJECT_ROOT / lora_path
-        if not lora_path.exists():
+        if not offline and not lora_path.exists():
             QMessageBox.warning(self, "找不到 LoRA 適配器",
                                 f"找不到 LoRA 適配器 GGUF：\n{lora_path}")
             return
@@ -740,7 +887,7 @@ class MainWindow(QMainWindow):
 
         self.translate_btn.setText("⏹  停止")
         self._set_tone(self.translate_btn, "danger")
-        self.scan_btn.setEnabled(False)
+        self._set_busy(True)
 
         n_files = len(self._scan_targets)
         # 用字串對數作為進度條上限，讓進度隨每條字串平滑推進
@@ -768,22 +915,32 @@ class MainWindow(QMainWindow):
             cfg=cfg,
             modpack_path=modpack_path,
             retry_count=self.retry_spin.value(),
+            offline=offline,
         )
-        run_log.section("開始翻譯")
-        run_log.table([
-            ("待處理檔案", f"{n_files:,}"),
-            ("預估字串", f"{self._scan_total_pairs:,}"),
-            ("重試次數", self.retry_spin.value()),
-            ("目標語言", cfg.language.code),
-            ("基礎模型", cfg.model.base_gguf_path or cfg.model.base_hf_filename),
-            ("LoRA", f"{cfg.model.lora_gguf_path or '（無）'}（scale {cfg.model.lora_scale}）"),
-            ("服務位址", cfg.model.server_url),
-            ("GPU 層數", cfg.model.n_gpu_layers),
-            ("context / max_tokens", f"{cfg.model.n_ctx} / {cfg.model.max_tokens}"),
-            ("temperature / repeat_penalty",
-             f"{cfg.model.temperature} / {cfg.model.repeat_penalty}"),
-            ("快取檔", cfg.paths.translation_cache),
-        ])
+        if offline:
+            run_log.section("套用翻譯包（不啟動模型）")
+            run_log.table([
+                ("待處理檔案", f"{n_files:,}"),
+                ("預估字串", f"{self._scan_total_pairs:,}"),
+                ("目標語言", cfg.language.code),
+                ("快取檔", cfg.paths.translation_cache),
+            ])
+        else:
+            run_log.section("開始翻譯")
+            run_log.table([
+                ("待處理檔案", f"{n_files:,}"),
+                ("預估字串", f"{self._scan_total_pairs:,}"),
+                ("重試次數", self.retry_spin.value()),
+                ("目標語言", cfg.language.code),
+                ("基礎模型", cfg.model.base_gguf_path or cfg.model.base_hf_filename),
+                ("LoRA", f"{cfg.model.lora_gguf_path or '（無）'}（scale {cfg.model.lora_scale}）"),
+                ("服務位址", cfg.model.server_url),
+                ("GPU 層數", cfg.model.n_gpu_layers),
+                ("context / max_tokens", f"{cfg.model.n_ctx} / {cfg.model.max_tokens}"),
+                ("temperature / repeat_penalty",
+                 f"{cfg.model.temperature} / {cfg.model.repeat_penalty}"),
+                ("快取檔", cfg.paths.translation_cache),
+            ])
 
         self._translate_worker.log.connect(run_log.write)
         self._translate_worker.progress.connect(self._on_translate_progress)
@@ -819,23 +976,27 @@ class MainWindow(QMainWindow):
         self._translated_modpack_path = self.modpack_edit.text().strip()
         self._failed_items = list(failed_items or [])
 
+        action = "匯入" if self._import_mode else "翻譯"
         if self._translation_cancelled:
             self._set_accent("orange")
             self.translate_btn.setText("↩  已停止，繼續？")
             self._set_tone(self.translate_btn, "warning")
-            summary_lines += [
-                "翻譯已中止",
-                f"  已翻譯：{translated:,} 組",
-                f"  快取命中：{cached:,} 組",
-                f"  回退（使用原文）：{fallback:,} 組",
-            ]
+            summary_lines.append(f"{action}已中止")
         else:
             self.progress_bar.setValue(self.progress_bar.maximum())
             self._set_accent("green")
             self.translate_btn.setText("✓  完成")
             self._set_tone(self.translate_btn, "success")
+            summary_lines.append(f"{action}完成")
+
+        if self._import_mode:
             summary_lines += [
-                "翻譯完成",
+                f"  套用翻譯包／快取：{cached:,} 組",
+                f"  用語庫直接補上：{translated:,} 組",
+                f"  翻譯包裡沒有（保留英文）：{fallback:,} 組",
+            ]
+        else:
+            summary_lines += [
                 f"  已翻譯：{translated:,} 組",
                 f"  快取命中：{cached:,} 組",
                 f"  回退（使用原文）：{fallback:,} 組",
@@ -845,13 +1006,19 @@ class MainWindow(QMainWindow):
             summary_lines.append(
                 f"  ⚠ {failed_files} 個模組/任務書含失敗項目 → 詳見 Failed Items/ 資料夾"
             )
+        if self._import_mode and fallback > 0:
+            summary_lines.append(
+                "  可按「失敗項目…」手動補譯，或重新掃描後按「開始翻譯」用本機模型補齊。"
+            )
         self.log_edit.setPlainText(existing + "\n" + "\n".join(summary_lines))
         self.log_edit.moveCursor(QTextCursor.MoveOperation.End)
         run_log.write("\n".join(summary_lines[2:]))     # 略過空行與分隔線
 
         self._refresh_failed_button()
 
-        if failed_items and not self._translation_cancelled:
+        # 匯入時不主動彈補譯視窗：剩下的多半是匯出者自己也留英文的條目，
+        # 朋友只是想套用翻譯，要補的話按鈕還在。
+        if failed_items and not self._translation_cancelled and not self._import_mode:
             self._offer_manual_translation(failed_items)
 
     # ------------------------------------------------------- 失敗項目手動補譯
@@ -923,6 +1090,7 @@ class MainWindow(QMainWindow):
     def _on_error(self, msg: str):
         self._stats_timer.stop()
         self._force_stop_timer.stop()
+        self._import_mode = False
         self.translate_btn.setText("▶  開始翻譯")
         self._set_tone(self.translate_btn, "")
         self.progress_bar.setVisible(False)
@@ -968,8 +1136,8 @@ class MainWindow(QMainWindow):
         )
         self.translate_btn.setText("↩  已停止，繼續？")
         self._set_tone(self.translate_btn, "warning")
+        self._set_busy(False)
         self.translate_btn.setEnabled(True)
-        self.scan_btn.setEnabled(True)
         self.stats_label.setVisible(False)
 
     # ------------------------------------------------------------------ 路徑變更
@@ -977,6 +1145,7 @@ class MainWindow(QMainWindow):
     def _on_modpack_path_changed(self, new_path: str):
         current_text = self.translate_btn.text()
         if current_text in ("✓  完成", "↩  已停止，繼續？"):
+            self._import_mode = False
             self.translate_btn.setText("▶  開始翻譯")
             self._set_tone(self.translate_btn, "")
             self._set_accent("blue")

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import random
 import threading
 import time
@@ -21,6 +20,7 @@ from modpack_translator.pipeline.patcher import (
 from modpack_translator.pipeline.glossary import default_glossary
 from modpack_translator.pipeline.preprocessor import diff_keys
 from modpack_translator.pipeline.runner import (
+    load_cache,
     load_manual_translations,
     manual_translations_path,
     _write_failed_items,
@@ -28,23 +28,14 @@ from modpack_translator.pipeline.runner import (
     process_target,
     read_existing_target,
     read_target_strings,
+    save_cache,
 )
 from modpack_translator.pipeline.scanner import ModpackScanner, TranslationTarget, resolve_game_root
-from modpack_translator.pipeline.translator import GGUFTranslator
+from modpack_translator.pipeline.translator import GGUFTranslator, OfflineTranslator
 from modpack_translator import run_log
 
 # src/modpack_translator/gui/ → 上 4 層到專案根目錄
 _PROJECT_ROOT = Path(__file__).parents[3]
-
-
-def _load_cache(cache_path: Path) -> dict[str, str]:
-    if cache_path.exists():
-        return json.loads(cache_path.read_text(encoding="utf-8"))
-    return {}
-
-
-def _flush_cache(cache_path: Path, cache: dict[str, str]) -> None:
-    cache_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _filter_pending_targets(all_targets: list[TranslationTarget], lang_code: str) -> list[TranslationTarget]:
@@ -138,14 +129,16 @@ class TranslateWorker(QThread):
         cfg: AppConfig,
         modpack_path: Path,
         retry_count: int = 0,
+        offline: bool = False,
     ):
         super().__init__()
         self._targets      = targets
         self._cfg          = cfg
         self._modpack_path = modpack_path
         self._retry_count  = retry_count
+        self._offline      = offline      # 套用匯入的翻譯包：不啟動模型
         self._cancel       = False
-        self._translator: GGUFTranslator | None = None
+        self._translator: GGUFTranslator | OfflineTranslator | None = None
 
     def cancel(self):
         self._cancel = True
@@ -176,11 +169,32 @@ class TranslateWorker(QThread):
             f"　（{seconds:.1f} 秒）"
         )
 
+    def _open_translator(self) -> GGUFTranslator | OfflineTranslator | None:
+        """開好翻譯器；模型服務起不來時已回報錯誤，回 None。"""
+        glossary_root = self._cfg.paths.output_root
+        if self._offline:
+            self.log.emit("匯入模式：不啟動模型，只套用翻譯包、快取與手動補譯；都沒有的字串保留英文。")
+            return OfflineTranslator(default_glossary(glossary_root))
+
+        self.log.emit("正在連線或啟動本機模型服務，請稍候…")
+        try:
+            translator = GGUFTranslator(self._cfg.model, self._cfg.language.system_prompt)
+            translator.glossary = default_glossary(glossary_root)
+            return translator
+        except Exception as exc:
+            self.log.emit(
+                f"[致命錯誤] 模型服務啟動失敗：{exc!r}\n"
+                f"{traceback.format_exc().rstrip()}\n"
+                f"llama-server 的詳細輸出見 .runtime/llama-server.log"
+            )
+            self.error.emit(f"模型服務啟動失敗：{exc}")
+            return None
+
     def run(self):
         self._thread_id = threading.current_thread().ident
         try:
             cache_path = self._cfg.paths.translation_cache
-            cache = _load_cache(cache_path)
+            cache = load_cache(cache_path)
             run_started = time.monotonic()
             total_translated = total_cached = total_fallback = total_skipped = 0
             total_already = total_source = 0
@@ -216,24 +230,14 @@ class TranslateWorker(QThread):
                 backed_up = backup_data_files(game_root, data_files)
                 self.log.emit(f"已備份 {backed_up} 個資料包檔案至 data_bak/")
 
-            self.log.emit("正在連線或啟動本機模型服務，請稍候…")
-            translator = None
-            try:
-                translator = GGUFTranslator(self._cfg.model, self._cfg.language.system_prompt)
-                translator.glossary = default_glossary(self._cfg.paths.output_root)
-                self._translator = translator
-                if translator.glossary:
-                    self.log.emit(f"已載入用語庫 {len(translator.glossary):,} 條詞彙")
-            except Exception as exc:
-                self.log.emit(
-                    f"[致命錯誤] 模型服務啟動失敗：{exc!r}\n"
-                    f"{traceback.format_exc().rstrip()}\n"
-                    f"llama-server 的詳細輸出見 .runtime/llama-server.log"
-                )
-                self.error.emit(f"模型服務啟動失敗：{exc}")
+            translator = self._open_translator()
+            if translator is None:
                 return
+            self._translator = translator
+            if translator.glossary:
+                self.log.emit(f"已載入用語庫 {len(translator.glossary):,} 條詞彙")
             try:
-                self.log.emit("模型服務已就緒，開始翻譯…")
+                self.log.emit("開始套用翻譯包…" if self._offline else "模型服務已就緒，開始翻譯…")
 
                 # 每條字串完成後觸發：更新累計數並節流發送信號（每 0.5 秒最多 1 次）
                 _last_emit_t = [0.0]
@@ -293,11 +297,11 @@ class TranslateWorker(QThread):
 
                     cache_dirty += 1
                     if cache_dirty >= 100:
-                        _flush_cache(cache_path, cache)
+                        save_cache(cache_path, cache)
                         cache_dirty = 0
                         self.log.emit(f"進度已儲存（{i + 1}/{total} 個檔案）…")
 
-                _flush_cache(cache_path, cache)
+                save_cache(cache_path, cache)
 
                 # 寫出失敗項目
                 failed_dir = _PROJECT_ROOT / "Failed Items"

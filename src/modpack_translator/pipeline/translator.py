@@ -273,6 +273,26 @@ def _backend_help_from_log(detail: str) -> str:
     return ""
 
 
+class OfflineTranslator:
+    """匯入翻譯包時用的翻譯器：不啟動模型。
+
+    快取、手動補譯、靜態對照、用語庫整串命中照常生效；全都沒命中的字串由 runner
+    直接判為失敗（保留英文、列入失敗項目），不會去叫模型。匯入的那台電腦因此不必
+    下載 5 GB 的基礎模型，也不必有顯示卡。
+    """
+
+    offline = True
+
+    def __init__(self, glossary=None) -> None:
+        self.glossary = glossary
+
+    def translate(self, text: str, cancel_check: Callable[[], bool] | None = None) -> str:
+        return ""
+
+    def close(self) -> None:
+        pass
+
+
 class GGUFTranslator:
     def __init__(self, cfg: ModelConfig, system_prompt: str) -> None:
         from openai import OpenAI
